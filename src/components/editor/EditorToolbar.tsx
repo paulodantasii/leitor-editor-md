@@ -12,6 +12,7 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Heading4,
   List,
   ListOrdered,
   Quote,
@@ -332,6 +333,17 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
             title="Título 3"
           >
             <Heading3 className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
+            className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
+              editor.isActive('heading', { level: 4 }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+            }`}
+            title="Título 4"
+          >
+            <Heading4 className="w-4 h-4" />
           </button>
         </div>
 

@@ -86,7 +86,7 @@ export const TiptapEditor: React.FC = () => {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4] },
+        heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Image.configure({ inline: true, allowBase64: true }),
       TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote'] }),
@@ -96,7 +96,7 @@ export const TiptapEditor: React.FC = () => {
       TextStyle,
       Color,
       CustomHighlight,
-      Markdown.configure({ html: true, transformPastedText: true }),
+      Markdown.configure({ html: true, transformPastedText: true, breaks: true }),
     ],
     content: currentDoc.content,
     editable: isEditable,
