@@ -151,6 +151,8 @@ mark.gray {
 
 .ProseMirror p {
   margin-bottom: 1.25em;
+  text-align: justify;
+  text-justify: inter-word;
 }
 
 .ProseMirror h1 {
@@ -240,6 +242,8 @@ mark.gray {
 
 .ProseMirror li {
   margin-bottom: 0.25em;
+  text-align: justify;
+  text-justify: inter-word;
 }
 
 .ProseMirror li > p {
@@ -260,6 +264,8 @@ mark.gray {
   font-style: italic;
   margin: 1.5em 0;
   color: #334155;
+  text-align: justify;
+  text-justify: inter-word;
 }
 
 .ProseMirror blockquote p {
@@ -527,12 +533,19 @@ mark.gray {
     orphans: 3 !important;
     widows: 3 !important;
     color: #0f172a !important;
+    text-align: justify !important;
+    text-justify: inter-word !important;
   }
 
   .ProseMirror ul,
   .ProseMirror ol {
     padding-left: 1.5em !important;
     margin-bottom: 0.9em !important;
+  }
+
+  .ProseMirror li {
+    text-align: justify !important;
+    text-justify: inter-word !important;
   }
 
   .ProseMirror blockquote {
@@ -546,6 +559,8 @@ mark.gray {
     page-break-inside: avoid !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    text-align: justify !important;
+    text-justify: inter-word !important;
   }
 
   .ProseMirror blockquote p {

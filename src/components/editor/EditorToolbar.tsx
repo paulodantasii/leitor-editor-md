@@ -384,11 +384,18 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
 
           <button
             type="button"
-            onClick={() => editor.chain().focus().setTextAlign('justify').run()}
+            onClick={() => {
+              editor.chain().focus().unsetTextAlign().run();
+            }}
             className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
-              editor.isActive({ textAlign: 'justify' }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+              editor.isActive({ textAlign: 'justify' }) ||
+              (!editor.isActive({ textAlign: 'left' }) &&
+                !editor.isActive({ textAlign: 'center' }) &&
+                !editor.isActive({ textAlign: 'right' }))
+                ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400'
+                : ''
             }`}
-            title="Justificar"
+            title="Justificar (Padrão)"
           >
             <AlignJustify className="w-4 h-4" />
           </button>
