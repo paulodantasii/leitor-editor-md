@@ -1,9 +1,9 @@
-const CACHE_NAME = 'leitor-html-v2';
+const CACHE_NAME = 'leitor-md-v1';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/favicon.svg'
+  './',
+  './index.html',
+  './manifest.json',
+  './favicon.svg'
 ];
 
 self.addEventListener('install', (event) => {
