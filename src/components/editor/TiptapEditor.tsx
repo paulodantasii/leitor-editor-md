@@ -100,7 +100,8 @@ export const TiptapEditor: React.FC = () => {
     ],
     content: currentDoc.content,
     editable: isEditable,
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor, transaction }) => {
+      if (!transaction.docChanged) return;
       const rawMarkdown = editor.storage.markdown.getMarkdown();
       updateDocumentContent(rawMarkdown);
       updateHighlightCount(editor);
@@ -149,18 +150,26 @@ export const TiptapEditor: React.FC = () => {
     },
   });
 
-  // Update content when document changes externally
+  // Update content when document changes externally or docId switches
   useEffect(() => {
-    if (editor && currentDoc.content && editor.storage.markdown.getMarkdown() !== currentDoc.content) {
+    if (!editor) return;
+
+    if (currentDoc.content === '') {
+      editor.commands.clearContent(false);
+      updateHighlightCount(editor);
+      return;
+    }
+
+    if (editor.storage.markdown.getMarkdown().trim() !== currentDoc.content.trim()) {
       editor.commands.setContent(currentDoc.content, false);
       updateHighlightCount(editor);
     }
-  }, [currentDoc.content, editor, updateHighlightCount]);
+  }, [currentDoc.docId, currentDoc.content, editor, updateHighlightCount]);
 
   // Update editor editable mode
   useEffect(() => {
     if (editor) {
-      editor.setEditable(isEditable);
+      editor.setEditable(isEditable, false);
       if (isEditable) {
         setPopoverOpen(false);
       }

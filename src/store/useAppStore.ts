@@ -33,6 +33,7 @@ interface AppState {
   setDocument: (doc: Partial<DocumentState>) => void;
   updateDocumentContent: (content: string) => void;
   loadCachedDocument: () => void;
+  createNewDocument: () => void;
 
   // Highlights Counter
   highlightCount: number;
@@ -58,22 +59,17 @@ interface AppState {
 const initialPreferences = loadUserPreferences();
 
 const getInitialDoc = (): DocumentState => {
-  const hasSession = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('has_active_session');
-  if (hasSession) {
-    return loadLocalDocument() || {
-      title: 'Constituição Federal - Amostra Vade Mecum.md',
-      content: SAMPLE_LEGISLATION_DOC,
-      oneDriveItemId: null,
-      lastSavedAt: null,
-      isDirty: false,
-    };
+  const cached = loadLocalDocument();
+  if (cached && (cached.content !== undefined || cached.title)) {
+    return { ...cached, docId: cached.docId || 'doc-initial' };
   }
   return {
-    title: 'Novo Documento.md',
-    content: '',
+    title: 'Constituição Federal - Amostra Vade Mecum.md',
+    content: SAMPLE_LEGISLATION_DOC,
     oneDriveItemId: null,
     lastSavedAt: null,
     isDirty: false,
+    docId: 'doc-sample',
   };
 };
 
@@ -118,7 +114,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   document: initialDoc,
   setDocument: (docPartial) => {
     set((state) => {
-      const updated = { ...state.document, ...docPartial };
+      const isNewContent = docPartial.content !== undefined && docPartial.content !== state.document.content;
+      const updated = {
+        ...state.document,
+        ...docPartial,
+        ...(isNewContent && !docPartial.docId
+          ? { docId: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}` }
+          : {}),
+      };
       saveLocalDocument(updated);
       return { document: updated };
     });
@@ -137,8 +140,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       oneDriveItemId: null,
       lastSavedAt: null,
       isDirty: false,
+      docId: 'doc-sample',
     };
-    set({ document: cached });
+    set({ document: { ...cached, docId: cached.docId || `doc-${Date.now()}` } });
+  },
+  createNewDocument: () => {
+    const newDoc: DocumentState = {
+      title: 'Sem Título.md',
+      content: '',
+      oneDriveItemId: null,
+      lastSavedAt: new Date().toLocaleTimeString(),
+      isDirty: false,
+      docId: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    };
+    set({
+      document: newDoc,
+      fileHandle: null,
+      highlightCount: 0,
+      isEditable: true, // Já abre em modo de edição para digitar direto
+      isHighlightMode: false,
+    });
+    saveLocalDocument(newDoc);
   },
 
   // Highlights Counter

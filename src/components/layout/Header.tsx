@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { AppearanceMenu } from './AppearanceMenu';
+import { ConfirmNewModal } from '../modals/ConfirmNewModal';
 import { downloadMarkdownFile, printDocument } from '../../services/exportService';
 import {
   Highlighter,
@@ -37,6 +38,7 @@ export const Header: React.FC = () => {
     userProfile,
     setIsOneDriveModalOpen,
     setIsSettingsModalOpen,
+    createNewDocument,
   } = useAppStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,6 +50,7 @@ export const Header: React.FC = () => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editableTitle, setEditableTitle] = useState(currentDoc.title);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const [isConfirmNewModalOpen, setIsConfirmNewModalOpen] = useState(false);
 
   // Close Export & Mobile Dropdowns when clicking outside
   useEffect(() => {
@@ -145,20 +148,31 @@ export const Header: React.FC = () => {
     };
   }, [syncStatus, currentDoc.isDirty, setSyncStatus]);
 
-  // Start Blank File
+  // Start Blank File with Intelligent Confirmation & Save Option
   const handleNewFile = () => {
-    if (currentDoc.isDirty) {
-      const confirmNew = window.confirm('Você tem alterações não salvas. Deseja iniciar um novo arquivo e descartá-las?');
-      if (!confirmNew) return;
+    const hasContent = Boolean(currentDoc.content && currentDoc.content.trim().length > 0);
+    const isDirty = currentDoc.isDirty;
+
+    if (isDirty || hasContent) {
+      setIsConfirmNewModalOpen(true);
+      return;
     }
-    setFileHandle(null);
-    setDocument({
-      title: 'Sem Título.md',
-      content: '',
-      oneDriveItemId: null,
-      lastSavedAt: new Date().toLocaleTimeString(),
-      isDirty: false,
-    });
+
+    // Se já estiver completamente em branco, apenas executa createNewDocument
+    createNewDocument();
+  };
+
+  const handleConfirmDiscardNew = () => {
+    setIsConfirmNewModalOpen(false);
+    createNewDocument();
+    showNotification('Novo documento em branco');
+  };
+
+  const handleConfirmSaveAndNew = async () => {
+    await handleSaveFile();
+    setIsConfirmNewModalOpen(false);
+    createNewDocument();
+    showNotification('Salvo e novo documento criado');
   };
 
   // Native Open File with iPad/Mobile Fallback
@@ -580,6 +594,15 @@ export const Header: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <ConfirmNewModal
+        isOpen={isConfirmNewModalOpen}
+        onClose={() => setIsConfirmNewModalOpen(false)}
+        onConfirmDiscard={handleConfirmDiscardNew}
+        onConfirmSaveAndNew={handleConfirmSaveAndNew}
+        isDirty={currentDoc.isDirty}
+        documentTitle={currentDoc.title}
+      />
     </header>
   );
 };

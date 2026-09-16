@@ -8,7 +8,13 @@ interface WelcomeScreenProps {
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinueLast, onOpenNew }) => {
-  const { document: currentDoc, setDocument, setFileHandle, setIsOneDriveModalOpen } = useAppStore();
+  const {
+    document: currentDoc,
+    setDocument,
+    setFileHandle,
+    setIsOneDriveModalOpen,
+    createNewDocument,
+  } = useAppStore();
 
   const handleOpenFileClick = async () => {
     try {
@@ -71,14 +77,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinueLast, on
   };
 
   const handleStartBlankDoc = () => {
-    setFileHandle(null);
-    setDocument({
-      title: 'Sem Título.md',
-      content: '',
-      oneDriveItemId: null,
-      lastSavedAt: new Date().toLocaleTimeString(),
-      isDirty: false,
-    });
+    createNewDocument();
     onOpenNew();
   };
 

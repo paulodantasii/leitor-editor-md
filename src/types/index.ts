@@ -26,6 +26,7 @@ export interface DocumentState {
   oneDriveItemId: string | null;
   lastSavedAt: string | null;
   isDirty: boolean;
+  docId?: string;
 }
 
 export interface OneDriveItem {
