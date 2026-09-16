@@ -147,6 +147,7 @@ mark.gray {
   outline: none !important;
   min-height: 70vh;
   line-height: 1.7;
+  max-width: 100%;
 }
 
 .ProseMirror p {
@@ -325,15 +326,36 @@ mark.gray {
   overflow-x: auto;
   margin: 1.5em 0;
   max-width: 100%;
+  width: 100%;
   border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
   -webkit-overflow-scrolling: touch;
+}
+
+.dark .ProseMirror .tableWrapper {
+  border-color: #334155;
+}
+
+.ProseMirror > table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  width: 100%;
+  margin: 1.5em 0;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dark .ProseMirror > table {
+  border-color: #334155;
 }
 
 .ProseMirror table {
   border-collapse: collapse;
   width: 100%;
+  min-width: 100%;
   margin: 0;
-  overflow: hidden;
   font-size: 0.95em;
   line-height: 1.5;
 }
@@ -370,6 +392,44 @@ mark.gray {
   margin-bottom: 0 !important;
   text-align: inherit;
   text-justify: auto;
+}
+
+/* Custom horizontal scrollbar on table */
+.ProseMirror .tableWrapper::-webkit-scrollbar,
+.ProseMirror > table::-webkit-scrollbar {
+  height: 6px;
+}
+
+.ProseMirror .tableWrapper::-webkit-scrollbar-track,
+.ProseMirror > table::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 3px;
+}
+
+.dark .ProseMirror .tableWrapper::-webkit-scrollbar-track,
+.dark .ProseMirror > table::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ProseMirror .tableWrapper::-webkit-scrollbar-thumb,
+.ProseMirror > table::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.dark .ProseMirror .tableWrapper::-webkit-scrollbar-thumb,
+.dark .ProseMirror > table::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 640px) {
+  .ProseMirror th,
+  .ProseMirror td {
+    padding: 0.45em 0.6em;
+    font-size: 0.86em;
+    min-width: 70px;
+  }
 }
 
 .ProseMirror .selectedCell:after {

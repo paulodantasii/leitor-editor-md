@@ -9,7 +9,8 @@ import TextStyle from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import { Markdown } from 'tiptap-markdown';
 import TextAlign from '@tiptap/extension-text-align';
-import Table from '@tiptap/extension-table';
+import Table, { createColGroup } from '@tiptap/extension-table';
+import { mergeAttributes } from '@tiptap/core';
 import TableRow from '@tiptap/extension-table-row';
 import TableHeader from '@tiptap/extension-table-header';
 import TableCell from '@tiptap/extension-table-cell';
@@ -93,7 +94,25 @@ export const TiptapEditor: React.FC = () => {
         heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Image.configure({ inline: true, allowBase64: true }),
-      Table.configure({
+      Table.extend({
+        renderHTML({ node, HTMLAttributes }) {
+          const { colgroup, tableWidth, tableMinWidth } = createColGroup(node, this.options.cellMinWidth);
+          return [
+            'div',
+            { class: 'tableWrapper' },
+            [
+              'table',
+              mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+                style: tableWidth
+                  ? `width: ${tableWidth}`
+                  : `min-width: ${tableMinWidth}`,
+              }),
+              colgroup,
+              ['tbody', 0],
+            ],
+          ];
+        },
+      }).configure({
         resizable: true,
       }),
       TableRow,
@@ -493,7 +512,7 @@ export const TiptapEditor: React.FC = () => {
         
         <EditorContent 
           editor={editor} 
-          className="bg-white dark:bg-slate-800/90 shadow-sm border border-slate-200 dark:border-slate-700/60 rounded-xl p-6 sm:p-10 min-h-[75vh] print:shadow-none print:border-none print:p-0 print:min-h-0 print:bg-transparent print:dark:bg-transparent" 
+          className="bg-white dark:bg-slate-800/90 shadow-sm border border-slate-200 dark:border-slate-700/60 rounded-xl p-4 sm:p-10 min-h-[75vh] max-w-full overflow-hidden print:shadow-none print:border-none print:p-0 print:min-h-0 print:bg-transparent print:dark:bg-transparent" 
         />
       </div>
     </div>
