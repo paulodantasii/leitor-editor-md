@@ -474,7 +474,7 @@ export const Header: React.FC = () => {
               </button>
 
               {isExportMenuOpen && (
-                <div className="absolute right-0 mt-2 w-44 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 z-40 space-y-1 animate-in fade-in">
+                <div className="absolute right-0 top-full mt-2 w-44 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95">
                   <button
                     onClick={() => {
                       handleExportMD();
@@ -525,7 +525,7 @@ export const Header: React.FC = () => {
           </button>
 
           {/* Mobile Overflow Menu */}
-          <div className="relative lg:hidden shrink-0 flex items-center" ref={mobileMenuRef}>
+          <div className="relative lg:hidden shrink-0" ref={mobileMenuRef}>
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               title="Mais opções"
@@ -539,7 +539,7 @@ export const Header: React.FC = () => {
             </button>
 
             {isMobileMenuOpen && (
-              <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-2 z-40 space-y-1 animate-in fade-in">
+              <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-2 z-50 space-y-1 animate-in fade-in zoom-in-95">
                 <button
                   onClick={() => {
                     handleNewFile();
