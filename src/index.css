@@ -277,6 +277,41 @@ mark.gray {
   color: #e2e8f0;
 }
 
+/* Inline Code & Code Block Styling */
+.ProseMirror code {
+  background-color: #f1f5f9;
+  color: #0f172a;
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.88em;
+  border: 1px solid #e2e8f0;
+}
+
+.dark .ProseMirror code {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.ProseMirror pre {
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 0.85em 1.15em;
+  border-radius: 0.5rem;
+  margin: 1.25em 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.88em;
+}
+
+.ProseMirror pre code {
+  background-color: transparent !important;
+  color: inherit !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
 .ProseMirror img {
   max-width: 100%;
   height: auto;

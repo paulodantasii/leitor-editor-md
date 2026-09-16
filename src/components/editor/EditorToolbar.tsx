@@ -6,6 +6,7 @@ import {
   Italic,
   Underline as UnderlineIcon,
   Strikethrough,
+  Code,
   Highlighter,
   Trash2,
   ChevronDown,
@@ -225,6 +226,17 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
             title="Tachado"
           >
             <Strikethrough className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleCode().run()}
+            className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
+              editor.isActive('code') ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-semibold' : ''
+            }`}
+            title="Código Inline (`código` ou Ctrl+E)"
+          >
+            <Code className="w-4 h-4" />
           </button>
 
           {/* Highlight Color Picker & Remove Tool */}
