@@ -320,17 +320,33 @@ mark.gray {
   display: block;
 }
 
+/* Table Styling (TipTap & GFM Tables) */
+.ProseMirror .tableWrapper {
+  overflow-x: auto;
+  margin: 1.5em 0;
+  max-width: 100%;
+  border-radius: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+
 .ProseMirror table {
   border-collapse: collapse;
   width: 100%;
-  margin: 1.5em 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 0.95em;
+  line-height: 1.5;
 }
 
 .ProseMirror th,
 .ProseMirror td {
   border: 1px solid #cbd5e1;
-  padding: 0.5em 0.75em;
+  padding: 0.6em 0.85em;
   text-align: left;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+  min-width: 90px;
 }
 
 .dark .ProseMirror th,
@@ -341,10 +357,50 @@ mark.gray {
 .ProseMirror th {
   background-color: #f1f5f9;
   font-weight: 600;
+  color: #0f172a;
 }
 
 .dark .ProseMirror th {
   background-color: #1e293b;
+  color: #f8fafc;
+}
+
+.ProseMirror td p,
+.ProseMirror th p {
+  margin-bottom: 0 !important;
+  text-align: inherit;
+  text-justify: auto;
+}
+
+.ProseMirror .selectedCell:after {
+  z-index: 2;
+  position: absolute;
+  content: "";
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(59, 130, 246, 0.12);
+  pointer-events: none;
+}
+
+.dark .ProseMirror .selectedCell:after {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background-color: #3b82f6;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
 }
 
 .ProseMirror hr {
@@ -618,6 +674,17 @@ mark.gray {
     font-weight: 600 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+
+  .ProseMirror td p,
+  .ProseMirror th p {
+    margin-bottom: 0 !important;
+    text-align: left !important;
+  }
+
+  .ProseMirror tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 
   .ProseMirror pre,

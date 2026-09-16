@@ -9,6 +9,10 @@ import TextStyle from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import { Markdown } from 'tiptap-markdown';
 import TextAlign from '@tiptap/extension-text-align';
+import Table from '@tiptap/extension-table';
+import TableRow from '@tiptap/extension-table-row';
+import TableHeader from '@tiptap/extension-table-header';
+import TableCell from '@tiptap/extension-table-cell';
 
 import { useAppStore } from '../../store/useAppStore';
 import { CustomHighlight } from './CustomHighlight';
@@ -89,14 +93,20 @@ export const TiptapEditor: React.FC = () => {
         heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Image.configure({ inline: true, allowBase64: true }),
-      TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote'] }),
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote', 'tableCell', 'tableHeader'] }),
       Underline,
       Subscript,
       Superscript,
       TextStyle,
       Color,
       CustomHighlight,
-      Markdown.configure({ html: true, transformPastedText: true, breaks: true }),
+      Markdown.configure({ html: true, transformPastedText: true, transformCopiedText: true, breaks: true }),
     ],
     content: currentDoc.content,
     editable: isEditable,

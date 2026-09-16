@@ -26,6 +26,10 @@ import {
   Minus,
   Subscript as SubscriptIcon,
   Superscript as SuperscriptIcon,
+  Table as TableIcon,
+  Rows,
+  Columns,
+  Plus,
   Undo,
   Redo,
   RemoveFormatting,
@@ -96,6 +100,52 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isHighlightMenuOpen]);
+
+  const [isTableMenuOpen, setIsTableMenuOpen] = useState(false);
+  const [tableMenuCoords, setTableMenuCoords] = useState<{ top: number; left: number } | null>(null);
+  const tableButtonRef = useRef<HTMLButtonElement>(null);
+  const tableMenuRef = useRef<HTMLDivElement>(null);
+
+  const updateTableMenuPosition = useCallback(() => {
+    if (tableButtonRef.current) {
+      const rect = tableButtonRef.current.getBoundingClientRect();
+      setTableMenuCoords({
+        top: rect.bottom + 8,
+        left: rect.left + rect.width / 2,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isTableMenuOpen) {
+      updateTableMenuPosition();
+      window.addEventListener('scroll', updateTableMenuPosition, true);
+      window.addEventListener('resize', updateTableMenuPosition);
+    }
+    return () => {
+      window.removeEventListener('scroll', updateTableMenuPosition, true);
+      window.removeEventListener('resize', updateTableMenuPosition);
+    };
+  }, [isTableMenuOpen, updateTableMenuPosition]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        tableMenuRef.current &&
+        !tableMenuRef.current.contains(e.target as Node) &&
+        tableButtonRef.current &&
+        !tableButtonRef.current.contains(e.target as Node)
+      ) {
+        setIsTableMenuOpen(false);
+      }
+    };
+    if (isTableMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isTableMenuOpen]);
 
   if (!editor) return null;
 
@@ -499,6 +549,142 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
           >
             <Minus className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Table Operations */}
+        <div className="flex items-center gap-0.5 px-1.5 border-r border-slate-200 dark:border-slate-700 relative">
+          <button
+            ref={tableButtonRef}
+            type="button"
+            onClick={() => {
+              if (isHighlightMenuOpen) setIsHighlightMenuOpen(false);
+              setIsTableMenuOpen((prev) => !prev);
+            }}
+            className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1 ${
+              editor.isActive('table') || isTableMenuOpen
+                ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-medium'
+                : ''
+            }`}
+            title="Tabela (Inserir ou Gerenciar)"
+          >
+            <TableIcon className="w-4 h-4" />
+            <ChevronDown className="w-3 h-3 opacity-60" />
+          </button>
+
+          {isTableMenuOpen && tableMenuCoords && createPortal(
+            <div
+              ref={tableMenuRef}
+              style={{
+                position: 'fixed',
+                top: `${tableMenuCoords.top}px`,
+                left: `${tableMenuCoords.left}px`,
+                transform: 'translateX(-50%)',
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+              className="z-50 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-2 flex flex-col gap-1 min-w-[200px] animate-in fade-in zoom-in-95 duration-150 select-none pointer-events-auto text-xs"
+            >
+              {!editor.isActive('table') ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+                    setIsTableMenuOpen(false);
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-left text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Inserir Tabela (3 × 3)
+                </button>
+              ) : (
+                <>
+                  <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700/60 mb-1">
+                    Linhas & Colunas
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().addRowBefore().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <Rows className="w-3.5 h-3.5 text-blue-500" />
+                    Inserir linha acima
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().addRowAfter().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <Rows className="w-3.5 h-3.5 text-blue-500" />
+                    Inserir linha abaixo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().addColumnBefore().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <Columns className="w-3.5 h-3.5 text-emerald-500" />
+                    Inserir coluna à esquerda
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().addColumnAfter().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <Columns className="w-3.5 h-3.5 text-emerald-500" />
+                    Inserir coluna à direita
+                  </button>
+                  
+                  <div className="my-1 border-t border-slate-100 dark:border-slate-700/60" />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().deleteRow().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-slate-600 dark:text-slate-300 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                    Excluir linha atual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().deleteColumn().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-slate-600 dark:text-slate-300 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                    Excluir coluna atual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      editor.chain().focus().deleteTable().run();
+                      setIsTableMenuOpen(false);
+                    }}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 font-medium transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    Excluir tabela inteira
+                  </button>
+                </>
+              )}
+            </div>,
+            document.body
+          )}
         </div>
 
         {/* Actions: Clear Formatting, Undo, Redo */}
