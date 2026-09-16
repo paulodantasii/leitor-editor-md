@@ -20,7 +20,9 @@ import {
   Settings,
   FilePlus,
   Pencil,
+  RotateCw,
 } from 'lucide-react';
+import { forceAppUpdate } from '../../services/appUpdateService';
 
 export const Header: React.FC = () => {
   const {
@@ -587,6 +589,18 @@ export const Header: React.FC = () => {
                     className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
                   >
                     <Printer className="w-4 h-4 text-sky-500" /> PDF
+                  </button>
+                </div>
+
+                <div className="pt-1.5 border-t border-slate-100 dark:border-slate-700/60 mt-1">
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      forceAppUpdate();
+                    }}
+                    className="w-full p-2 text-left text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
+                  >
+                    <RotateCw className="w-4 h-4 text-blue-500" /> Recarregar App
                   </button>
                 </div>
               </div>
