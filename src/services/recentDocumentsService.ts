@@ -13,7 +13,7 @@ function getDocumentIdentifier(doc: Partial<DocumentState> | Partial<RecentDocum
   if (doc.oneDriveItemId) {
     return `onedrive_${doc.oneDriveItemId}`;
   }
-  if (doc.docId) {
+  if ('docId' in doc && doc.docId) {
     return `local_${doc.docId}`;
   }
   if ('id' in doc && doc.id) {
