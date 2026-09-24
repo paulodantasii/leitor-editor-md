@@ -55,9 +55,27 @@ export async function downloadOneDriveFile(fileId: string): Promise<string> {
 }
 
 /**
- * Overwrites an existing file in OneDrive with new Markdown content.
+ * Gets lightweight metadata (lastModifiedDateTime, eTag) for a specific file in OneDrive.
  */
-export async function saveOneDriveFile(fileId: string, content: string): Promise<void> {
+export async function getOneDriveItemMetadata(fileId: string): Promise<OneDriveItem> {
+  const token = await getAccessToken();
+  const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${fileId}?select=id,name,lastModifiedDateTime,eTag,size`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get OneDrive file metadata: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Overwrites an existing file in OneDrive with new Markdown content and returns updated metadata.
+ */
+export async function saveOneDriveFile(fileId: string, content: string): Promise<OneDriveItem> {
   const token = await getAccessToken();
   const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${fileId}/content`, {
     method: 'PUT',
@@ -70,5 +88,15 @@ export async function saveOneDriveFile(fileId: string, content: string): Promise
 
   if (!response.ok) {
     throw new Error(`Failed to save file to OneDrive: ${response.statusText}`);
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    return {
+      id: fileId,
+      name: 'document.md',
+      lastModifiedDateTime: new Date().toISOString(),
+    };
   }
 }

@@ -1,4 +1,5 @@
 import { UserPreferences, DocumentState } from '../types';
+import { saveRecentDocument } from './recentDocumentsService';
 
 const PREFS_KEY = 'leitor_md_preferences';
 const DOC_KEY = 'leitor_md_document';
@@ -38,7 +39,7 @@ export function saveUserPreferences(prefs: UserPreferences): void {
 }
 
 /**
- * Saves active document state to LocalStorage/IndexedDB backup.
+ * Saves active document state to LocalStorage and IndexedDB recent documents (up to 30 files).
  */
 export function saveLocalDocument(docState: DocumentState): void {
   try {
@@ -46,6 +47,11 @@ export function saveLocalDocument(docState: DocumentState): void {
   } catch (err) {
     console.error('Failed to save document to local storage', err);
   }
+
+  // Also maintain in IndexedDB recent documents collection
+  saveRecentDocument(docState).catch((err) => {
+    console.warn('Failed to save document to recent documents index:', err);
+  });
 }
 
 /**

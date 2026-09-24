@@ -5,6 +5,7 @@ import {
   SyncStatus,
   DocumentState,
   UserProfile,
+  RecentDocumentItem,
 } from '../types';
 import {
   loadUserPreferences,
@@ -12,6 +13,12 @@ import {
   loadLocalDocument,
   saveLocalDocument,
 } from '../services/storage';
+import {
+  getRecentDocuments,
+  saveRecentDocument,
+  deleteRecentDocument as deleteRecentFromDb,
+  loadRecentDocumentWithCloudSync,
+} from '../services/recentDocumentsService';
 import { SAMPLE_LEGISLATION_DOC } from '../components/sampleDocs';
 
 interface AppState {
@@ -35,6 +42,12 @@ interface AppState {
   loadCachedDocument: () => void;
   createNewDocument: () => void;
 
+  // Recent Documents (up to 30 files in cache)
+  recentDocuments: RecentDocumentItem[];
+  loadRecentDocuments: () => Promise<void>;
+  openRecentDocument: (item: RecentDocumentItem) => Promise<{ success: boolean; updatedFromCloud: boolean; warning?: string }>;
+  deleteRecentDocument: (id: string) => Promise<void>;
+
   // Highlights Counter
   highlightCount: number;
   setHighlightCount: (count: number) => void;
@@ -54,6 +67,8 @@ interface AppState {
   setIsOneDriveModalOpen: (open: boolean) => void;
   isSettingsModalOpen: boolean;
   setIsSettingsModalOpen: (open: boolean) => void;
+  isRecentModalOpen: boolean;
+  setIsRecentModalOpen: (open: boolean) => void;
 }
 
 const initialPreferences = loadUserPreferences();
@@ -163,6 +178,48 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveLocalDocument(newDoc);
   },
 
+  // Recent Documents (up to 30 files in cache)
+  recentDocuments: [],
+  loadRecentDocuments: async () => {
+    try {
+      const list = await getRecentDocuments();
+      set({ recentDocuments: list });
+    } catch (err) {
+      console.warn('Erro ao carregar lista de documentos recentes:', err);
+    }
+  },
+  openRecentDocument: async (item: RecentDocumentItem) => {
+    try {
+      set({ syncStatus: 'saving' });
+      const { doc, updatedFromCloud, warning } = await loadRecentDocumentWithCloudSync(item);
+
+      set({
+        document: doc,
+        fileHandle: null,
+        syncStatus: updatedFromCloud ? 'saved' : 'idle',
+        highlightCount: 0,
+      });
+
+      // Refresh recent list to update last opened order
+      const refreshed = await getRecentDocuments();
+      set({ recentDocuments: refreshed });
+
+      return { success: true, updatedFromCloud, warning };
+    } catch (err: any) {
+      set({ syncStatus: 'error' });
+      console.error('Falha ao abrir documento recente:', err);
+      return { success: false, updatedFromCloud: false, warning: err.message || 'Falha ao carregar documento' };
+    }
+  },
+  deleteRecentDocument: async (id: string) => {
+    try {
+      const updated = await deleteRecentFromDb(id);
+      set({ recentDocuments: updated });
+    } catch (err) {
+      console.error('Falha ao remover documento do histórico:', err);
+    }
+  },
+
   // Highlights Counter
   highlightCount: 0,
   setHighlightCount: (count) => set({ highlightCount: count }),
@@ -182,4 +239,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setIsOneDriveModalOpen: (open) => set({ isOneDriveModalOpen: open }),
   isSettingsModalOpen: false,
   setIsSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
+  isRecentModalOpen: false,
+  setIsRecentModalOpen: (open) => set({ isRecentModalOpen: open }),
 }));

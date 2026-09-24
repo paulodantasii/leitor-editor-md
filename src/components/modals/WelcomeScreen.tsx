@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Highlighter, History, FolderOpen, FileText, FilePlus, Cloud } from 'lucide-react';
+import { RecentDocumentItem } from '../../types';
+import { Highlighter, History, FolderOpen, FileText, FilePlus, Cloud, Clock, ArrowRight } from 'lucide-react';
 
 interface WelcomeScreenProps {
   onContinueLast: () => void;
@@ -14,7 +15,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinueLast, on
     setFileHandle,
     setIsOneDriveModalOpen,
     createNewDocument,
+    recentDocuments,
+    loadRecentDocuments,
+    openRecentDocument,
+    setIsRecentModalOpen,
   } = useAppStore();
+
+  useEffect(() => {
+    loadRecentDocuments();
+  }, [loadRecentDocuments]);
 
   const handleOpenFileClick = async () => {
     try {
@@ -86,9 +95,16 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinueLast, on
     onOpenNew();
   };
 
+  const handleOpenRecentItem = async (item: RecentDocumentItem) => {
+    await openRecentDocument(item);
+    onOpenNew();
+  };
+
+  const previewRecents = recentDocuments.slice(0, 3);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 animate-in fade-in duration-300">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-5xl w-full p-6 sm:p-10 flex flex-col items-center text-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-4 animate-in fade-in duration-300 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-5xl w-full p-6 sm:p-10 flex flex-col items-center text-center my-auto">
         {/* App Logo */}
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
           <Highlighter className="w-9 h-9" />
@@ -102,7 +118,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinueLast, on
         </p>
 
         {/* Option Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full mb-6">
           {/* Option 1: Continue Last Cached File */}
           <button
             onClick={onContinueLast}
@@ -196,6 +212,62 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinueLast, on
             </div>
           </button>
         </div>
+
+        {/* Section: Recent Documents in Cache (if any exist) */}
+        {recentDocuments.length > 0 && (
+          <div className="w-full pt-5 border-t border-slate-200/70 dark:border-slate-800/80 text-left">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Arquivos Recentes em Cache ({recentDocuments.length}/30)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenNew();
+                  setIsRecentModalOpen(true);
+                }}
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                Ver todos os {recentDocuments.length} arquivos
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 w-full">
+              {previewRecents.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleOpenRecentItem(item)}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/70 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-slate-800 text-left transition-all group cursor-pointer"
+                >
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      item.isOneDrive
+                        ? 'bg-sky-100 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400'
+                        : 'bg-slate-200/70 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {item.isOneDrive ? <Cloud className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                      {item.title}
+                    </p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(item.lastOpenedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {item.isOneDrive && <span className="text-sky-500 font-semibold">• OneDrive</span>}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

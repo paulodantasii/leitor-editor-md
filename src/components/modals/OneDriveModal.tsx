@@ -3,6 +3,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { loginWithOneDrive, logoutOneDrive, getActiveAccount } from '../../services/msalService';
 import { listOneDriveItems, downloadOneDriveFile, saveOneDriveFile } from '../../services/oneDriveService';
 import { OneDriveItem } from '../../types';
+import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { X, Cloud, Folder, FileCode, LogIn, LogOut, RefreshCw, UploadCloud, ChevronRight, Settings } from 'lucide-react';
 
 export const OneDriveModal: React.FC = () => {
@@ -24,6 +25,8 @@ export const OneDriveModal: React.FC = () => {
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pendingFileToOpen, setPendingFileToOpen] = useState<OneDriveItem | null>(null);
+  const [isUnsavedGuardOpen, setIsUnsavedGuardOpen] = useState(false);
 
   // Check active MSAL session
   useEffect(() => {
@@ -106,7 +109,7 @@ export const OneDriveModal: React.FC = () => {
     setCurrentFolderId(target.id);
   };
 
-  const handleOpenFile = async (file: OneDriveItem) => {
+  const doOpenFile = async (file: OneDriveItem) => {
     setIsLoading(true);
     try {
       const rawText = await downloadOneDriveFile(file.id);
@@ -117,6 +120,7 @@ export const OneDriveModal: React.FC = () => {
         oneDriveItemId: file.id,
         lastSavedAt: new Date().toLocaleTimeString(),
         isDirty: false,
+        cloudLastModified: file.lastModifiedDateTime,
       });
 
       setSyncStatus('saved');
@@ -125,6 +129,42 @@ export const OneDriveModal: React.FC = () => {
       setErrorMsg(err.message || 'Erro ao abrir arquivo do OneDrive.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleOpenFile = (file: OneDriveItem) => {
+    if (currentDoc.isDirty) {
+      setPendingFileToOpen(file);
+      setIsUnsavedGuardOpen(true);
+    } else {
+      doOpenFile(file);
+    }
+  };
+
+  const handleConfirmDiscardFromGuard = () => {
+    const file = pendingFileToOpen;
+    setPendingFileToOpen(null);
+    setIsUnsavedGuardOpen(false);
+    if (file) {
+      doOpenFile(file);
+    }
+  };
+
+  const handleConfirmSaveFromGuard = async () => {
+    try {
+      if (currentDoc.oneDriveItemId) {
+        await saveOneDriveFile(currentDoc.oneDriveItemId, currentDoc.content);
+      }
+      setDocument({ isDirty: false, lastSavedAt: new Date().toLocaleTimeString() });
+    } catch (err) {
+      console.warn('Erro ao salvar documento atual antes de trocar de arquivo:', err);
+    }
+
+    const file = pendingFileToOpen;
+    setPendingFileToOpen(null);
+    setIsUnsavedGuardOpen(false);
+    if (file) {
+      doOpenFile(file);
     }
   };
 
@@ -336,6 +376,18 @@ export const OneDriveModal: React.FC = () => {
             Fechar
           </button>
         </div>
+
+        <UnsavedChangesModal
+          isOpen={isUnsavedGuardOpen}
+          onClose={() => {
+            setIsUnsavedGuardOpen(false);
+            setPendingFileToOpen(null);
+          }}
+          onConfirmDiscard={handleConfirmDiscardFromGuard}
+          onConfirmSaveAndProceed={handleConfirmSaveFromGuard}
+          documentTitle={currentDoc.title}
+          actionType="open_onedrive"
+        />
       </div>
     </div>
   );

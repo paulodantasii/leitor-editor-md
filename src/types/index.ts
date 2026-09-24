@@ -27,6 +27,7 @@ export interface DocumentState {
   lastSavedAt: string | null;
   isDirty: boolean;
   docId?: string;
+  cloudLastModified?: string | null;
 }
 
 export interface OneDriveItem {
@@ -36,6 +37,7 @@ export interface OneDriveItem {
   folder?: { childCount: number };
   file?: { mimeType: string };
   lastModifiedDateTime: string;
+  eTag?: string;
   parentReference?: { path?: string };
 }
 
@@ -43,4 +45,14 @@ export interface UserProfile {
   name: string;
   email: string;
   avatarUrl?: string;
+}
+
+export interface RecentDocumentItem {
+  id: string;
+  title: string;
+  content: string;
+  oneDriveItemId: string | null;
+  lastSavedAt: string | null;
+  lastOpenedAt: number;
+  isOneDrive: boolean;
 }

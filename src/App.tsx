@@ -4,12 +4,17 @@ import { TiptapEditor } from './components/editor/TiptapEditor';
 import { OneDriveModal } from './components/modals/OneDriveModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { WelcomeScreen } from './components/modals/WelcomeScreen';
+import { RecentDocumentsModal } from './components/modals/RecentDocumentsModal';
 import { useAppStore } from './store/useAppStore';
 
 import { ReadingProgress } from './components/layout/ReadingProgress';
+import { useAutoSaveAndSync } from './hooks/useAutoSaveAndSync';
 
 export const App: React.FC = () => {
   const { preferences, document: currentDoc, loadCachedDocument, toggleHighlightMode } = useAppStore();
+
+  // Activates background autosave and beforeunload guard
+  useAutoSaveAndSync();
 
   // Sync document title in browser tab
   useEffect(() => {
@@ -109,6 +114,7 @@ export const App: React.FC = () => {
       <ReadingProgress />
       <OneDriveModal />
       <SettingsModal />
+      <RecentDocumentsModal />
     </div>
   );
 };

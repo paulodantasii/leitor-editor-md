@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { AppearanceMenu } from './AppearanceMenu';
-import { ConfirmNewModal } from '../modals/ConfirmNewModal';
+import { UnsavedChangesModal, GuardActionType } from '../modals/UnsavedChangesModal';
 import { downloadMarkdownFile, printDocument } from '../../services/exportService';
 import {
   Highlighter,
@@ -21,6 +21,7 @@ import {
   FilePlus,
   Pencil,
   RotateCw,
+  History,
 } from 'lucide-react';
 import { forceAppUpdate } from '../../services/appUpdateService';
 
@@ -41,6 +42,8 @@ export const Header: React.FC = () => {
     setIsOneDriveModalOpen,
     setIsSettingsModalOpen,
     createNewDocument,
+    recentDocuments,
+    setIsRecentModalOpen,
   } = useAppStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,7 +55,8 @@ export const Header: React.FC = () => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editableTitle, setEditableTitle] = useState(currentDoc.title);
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const [isConfirmNewModalOpen, setIsConfirmNewModalOpen] = useState(false);
+  const [unsavedModalAction, setUnsavedModalAction] = useState<GuardActionType | null>(null);
+  const pendingActionRef = useRef<(() => void | Promise<void>) | null>(null);
 
   // Close Export & Mobile Dropdowns when clicking outside
   useEffect(() => {
@@ -150,13 +154,50 @@ export const Header: React.FC = () => {
     };
   }, [syncStatus, currentDoc.isDirty, setSyncStatus]);
 
+  // Helper to guard actions against unsaved data loss
+  const executeWithGuard = (actionType: GuardActionType, callback: () => void | Promise<void>) => {
+    if (currentDoc.isDirty) {
+      pendingActionRef.current = callback;
+      setUnsavedModalAction(actionType);
+    } else {
+      callback();
+    }
+  };
+
+  const handleConfirmDiscard = () => {
+    const action = pendingActionRef.current;
+    pendingActionRef.current = null;
+    setUnsavedModalAction(null);
+    action?.();
+  };
+
+  const handleConfirmSaveAndProceed = async () => {
+    await handleSaveFile();
+    const action = pendingActionRef.current;
+    pendingActionRef.current = null;
+    setUnsavedModalAction(null);
+    action?.();
+  };
+
+  const handleCancelGuard = () => {
+    pendingActionRef.current = null;
+    setUnsavedModalAction(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   // Start Blank File with Intelligent Confirmation & Save Option
   const handleNewFile = () => {
     const hasContent = Boolean(currentDoc.content && currentDoc.content.trim().length > 0);
     const isDirty = currentDoc.isDirty;
 
     if (isDirty || hasContent) {
-      setIsConfirmNewModalOpen(true);
+      pendingActionRef.current = () => {
+        createNewDocument();
+        showNotification('Novo documento em branco');
+      };
+      setUnsavedModalAction('new');
       return;
     }
 
@@ -164,79 +205,72 @@ export const Header: React.FC = () => {
     createNewDocument();
   };
 
-  const handleConfirmDiscardNew = () => {
-    setIsConfirmNewModalOpen(false);
-    createNewDocument();
-    showNotification('Novo documento em branco');
-  };
+  // Native Open File with iPad/Mobile Fallback and Unsaved Guard
+  const handleOpenFile = () => {
+    executeWithGuard('open_local', async () => {
+      try {
+        if ('showOpenFilePicker' in window) {
+          const [handle] = await (window as any).showOpenFilePicker({
+            types: [
+              {
+                description: 'Arquivos Markdown',
+                accept: { 'text/markdown': ['.md', '.markdown', '.txt'] },
+              },
+            ],
+            multiple: false,
+          });
 
-  const handleConfirmSaveAndNew = async () => {
-    await handleSaveFile();
-    setIsConfirmNewModalOpen(false);
-    createNewDocument();
-    showNotification('Salvo e novo documento criado');
-  };
+          const file = await handle.getFile();
+          const text = await file.text();
 
-  // Native Open File with iPad/Mobile Fallback
-  const handleOpenFile = async () => {
-    try {
-      if ('showOpenFilePicker' in window) {
-        const [handle] = await (window as any).showOpenFilePicker({
-          types: [
-            {
-              description: 'Arquivos Markdown',
-              accept: { 'text/markdown': ['.md', '.txt'] },
-            },
-          ],
-          multiple: false,
-        });
-
-        const file = await handle.getFile();
-        const text = await file.text();
-
-        setFileHandle(handle);
-        setDocument({
-          title: file.name,
-          content: text,
-          oneDriveItemId: null,
-          lastSavedAt: new Date().toLocaleTimeString(),
-          isDirty: false,
-        });
-      } else {
-        // iPad / Mobile Fallback: Uses native Files app picker
-        fileInputRef.current?.click();
+          setFileHandle(handle);
+          setDocument({
+            title: file.name,
+            content: text,
+            oneDriveItemId: null,
+            lastSavedAt: new Date().toLocaleTimeString(),
+            isDirty: false,
+          });
+        } else {
+          // iPad / Mobile Fallback: Uses native Files app picker
+          fileInputRef.current?.click();
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          fileInputRef.current?.click();
+        }
       }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        fileInputRef.current?.click();
-      }
-    }
+    });
   };
 
-  // Fallback File Upload Event (Mobile / iPad)
+  // Fallback File Upload Event (Mobile / iPad) with Unsaved Guard
   const handleFileUploadFallback = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const rawText = event.target?.result as string;
-      if (rawText) {
-        setFileHandle(null);
-        setDocument({
-          title: file.name,
-          content: rawText,
-          oneDriveItemId: null,
-          lastSavedAt: new Date().toLocaleTimeString(),
-          isDirty: false,
-        });
+    const performLoad = () => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawText = event.target?.result as string;
+        if (rawText) {
+          setFileHandle(null);
+          setDocument({
+            title: file.name,
+            content: rawText,
+            oneDriveItemId: null,
+            lastSavedAt: new Date().toLocaleTimeString(),
+            isDirty: false,
+          });
+        }
+      };
+      reader.readAsText(file);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     };
-    reader.readAsText(file);
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    executeWithGuard('open_local', performLoad);
   };
 
   // Save File with iPad / Mobile Resilience
@@ -447,6 +481,21 @@ export const Header: React.FC = () => {
               <span className="hidden xl:inline">Abrir</span>
             </button>
 
+            {/* Botão Recentes */}
+            <button
+              onClick={() => setIsRecentModalOpen(true)}
+              title="Histórico de documentos recentes (até 30 em cache)"
+              className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0"
+            >
+              <History className="w-4 h-4 text-amber-500" />
+              <span className="hidden xl:inline">Recentes</span>
+              {recentDocuments.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                  {recentDocuments.length}
+                </span>
+              )}
+            </button>
+
             {/* Botão Salvar */}
             <button
               onClick={handleSaveFile}
@@ -560,6 +609,22 @@ export const Header: React.FC = () => {
                 </button>
                 <button
                   onClick={() => {
+                    setIsRecentModalOpen(true);
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center justify-between"
+                >
+                  <span className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-amber-500" /> Recentes
+                  </span>
+                  {recentDocuments.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                      {recentDocuments.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
                     handleSaveFile();
                     setIsMobileMenuOpen(false);
                   }}
@@ -609,13 +674,13 @@ export const Header: React.FC = () => {
         </div>
       </div>
 
-      <ConfirmNewModal
-        isOpen={isConfirmNewModalOpen}
-        onClose={() => setIsConfirmNewModalOpen(false)}
-        onConfirmDiscard={handleConfirmDiscardNew}
-        onConfirmSaveAndNew={handleConfirmSaveAndNew}
-        isDirty={currentDoc.isDirty}
+      <UnsavedChangesModal
+        isOpen={unsavedModalAction !== null}
+        onClose={handleCancelGuard}
+        onConfirmDiscard={handleConfirmDiscard}
+        onConfirmSaveAndProceed={handleConfirmSaveAndProceed}
         documentTitle={currentDoc.title}
+        actionType={unsavedModalAction || 'new'}
       />
     </header>
   );
