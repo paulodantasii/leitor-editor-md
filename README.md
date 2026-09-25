@@ -38,9 +38,14 @@ Aplicação web progressiva (PWA) de alta performance desenvolvida para leitura,
    * Monitorado pelo hook `useAutoSaveAndSync`.
    * Se o arquivo possui `oneDriveItemId` e `isDirty === true`, um timer com debounce de 2,5 segundos é iniciado.
    * Ao expirar a pausa na digitação, dispara `saveOneDriveFile`, grava a nova versão na nuvem, captura o `lastModifiedDateTime` e reseta `isDirty: false`.
-3. **Detecção de Conflitos e Atualização da Nuvem**:
-   * Ao focar na janela ou reativar a aba (iPad/PC), o app consulta os metadados do arquivo na nuvem.
-   * Se a nuvem tiver uma versão mais recente e o dispositivo local não tiver alterações (`!isDirty`), atualiza o documento automaticamente de forma transparente.
+3. **Detecção Contínua de Atualizações da Nuvem (Polling Ativo & Eventos)**:
+   * Monitorado continuamente por `useAutoSaveAndSync`:
+     * Polling periódico em segundo plano a cada 10 segundos (`CLOUD_POLL_INTERVAL_MS = 10000`).
+     * Checagem imediata em eventos de foco da janela (`window.focus`) e visibilidade da aba (`visibilitychange`).
+   * A sessão MSAL é restaurada proativamente na inicialização do app (`App.tsx`), garantindo checagem contínua sem depender da abertura manual do modal do OneDrive.
+   * Se a nuvem tiver uma versão mais recente:
+     * **Caso local limpo (`!isDirty`)**: O conteúdo é recarregado e aplicado instantaneamente no editor, exibindo um toast discreto (`SyncNotificationToast`).
+     * **Caso local com alterações pendentes (`isDirty`)**: Dispara o modal de resolução de conflito (`CloudConflictModal`), permitindo ao usuário escolher entre manter a versão local ou substituir pela versão mais recente da nuvem.
 4. **Guarda Universal de Alterações Não Salvas (`UnsavedChangesModal`)**:
    * Intercepta qualquer ação de carregamento de novo arquivo ("Abrir Local", "Abrir OneDrive", "Abrir do Histórico" ou "Novo Documento").
    * Proteção nativa no navegador via evento `beforeunload` para impedir fechamento ou recarregamento acidental.

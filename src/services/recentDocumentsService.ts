@@ -1,6 +1,6 @@
 import { get, set } from 'idb-keyval';
 import { DocumentState, RecentDocumentItem } from '../types';
-import { downloadOneDriveFile } from './oneDriveService';
+import { downloadOneDriveFile, getOneDriveItemMetadata } from './oneDriveService';
 
 const RECENT_DOCS_KEY = 'leitor_md_recent_documents_v1';
 const RECENT_DOCS_BACKUP_KEY = 'leitor_md_recent_documents_backup';
@@ -73,6 +73,7 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
     lastSavedAt: doc.lastSavedAt || new Date(now).toLocaleTimeString(),
     lastOpenedAt: now,
     isOneDrive: Boolean(doc.oneDriveItemId),
+    cloudLastModified: doc.cloudLastModified || null,
   };
 
   try {
@@ -165,7 +166,10 @@ export async function loadRecentDocumentWithCloudSync(
 
   // Attempt to fetch latest version from OneDrive
   try {
-    const freshestContent = await downloadOneDriveFile(item.oneDriveItemId);
+    const [freshestContent, metadata] = await Promise.all([
+      downloadOneDriveFile(item.oneDriveItemId),
+      getOneDriveItemMetadata(item.oneDriveItemId).catch(() => null),
+    ]);
 
     const doc: DocumentState = {
       title: item.title,
@@ -174,6 +178,7 @@ export async function loadRecentDocumentWithCloudSync(
       lastSavedAt: new Date().toLocaleTimeString(),
       isDirty: false,
       docId: `doc-${Date.now()}`,
+      cloudLastModified: metadata?.lastModifiedDateTime || item.cloudLastModified || null,
     };
 
     // Update the local cache with the newest cloud content

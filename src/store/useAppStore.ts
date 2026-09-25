@@ -57,6 +57,10 @@ interface AppState {
   setSyncStatus: (status: SyncStatus) => void;
   userProfile: UserProfile | null;
   setUserProfile: (profile: UserProfile | null) => void;
+  syncNotification: string | null;
+  setSyncNotification: (msg: string | null) => void;
+  cloudConflict: { cloudModified: string; cloudContent: string } | null;
+  setCloudConflict: (conflict: { cloudModified: string; cloudContent: string } | null) => void;
 
   // File Handle for Direct Overwrite Saving
   fileHandle: any | null;
@@ -229,6 +233,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSyncStatus: (status) => set({ syncStatus: status }),
   userProfile: null,
   setUserProfile: (profile) => set({ userProfile: profile }),
+  syncNotification: null,
+  setSyncNotification: (msg) => set({ syncNotification: msg }),
+  cloudConflict: null,
+  setCloudConflict: (conflict) => set({ cloudConflict: conflict }),
 
   // File Handle for Direct Overwrite Saving
   fileHandle: null,

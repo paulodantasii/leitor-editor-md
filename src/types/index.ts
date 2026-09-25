@@ -55,4 +55,5 @@ export interface RecentDocumentItem {
   lastSavedAt: string | null;
   lastOpenedAt: number;
   isOneDrive: boolean;
+  cloudLastModified?: string | null;
 }

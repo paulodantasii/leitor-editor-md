@@ -5,13 +5,32 @@ import { OneDriveModal } from './components/modals/OneDriveModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { WelcomeScreen } from './components/modals/WelcomeScreen';
 import { RecentDocumentsModal } from './components/modals/RecentDocumentsModal';
+import { CloudConflictModal } from './components/modals/CloudConflictModal';
+import { SyncNotificationToast } from './components/layout/SyncNotificationToast';
 import { useAppStore } from './store/useAppStore';
 
 import { ReadingProgress } from './components/layout/ReadingProgress';
 import { useAutoSaveAndSync } from './hooks/useAutoSaveAndSync';
+import { getActiveAccount } from './services/msalService';
 
 export const App: React.FC = () => {
-  const { preferences, document: currentDoc, loadCachedDocument, toggleHighlightMode } = useAppStore();
+  const { preferences, document: currentDoc, loadCachedDocument, toggleHighlightMode, setUserProfile } = useAppStore();
+
+  // Restore MSAL session on boot so background cloud sync is immediately active
+  useEffect(() => {
+    getActiveAccount()
+      .then((account) => {
+        if (account) {
+          setUserProfile({
+            name: account.name || account.username,
+            email: account.username,
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('Falha ao restaurar sessão MSAL no boot:', err);
+      });
+  }, [setUserProfile]);
 
   // Activates background autosave and beforeunload guard
   useAutoSaveAndSync();
@@ -115,6 +134,8 @@ export const App: React.FC = () => {
       <OneDriveModal />
       <SettingsModal />
       <RecentDocumentsModal />
+      <CloudConflictModal />
+      <SyncNotificationToast />
     </div>
   );
 };
