@@ -36,7 +36,7 @@ Aplicação web progressiva (PWA) de alta performance desenvolvida para leitura,
    * O documento ativo é persistido imediatamente (0 ms) no armazenamento local (IndexedDB / LocalStorage).
 2. **Salvamento Automático no OneDrive**:
    * Monitorado pelo hook `useAutoSaveAndSync`.
-   * Se o arquivo possui `oneDriveItemId` e `isDirty === true`, um timer com debounce de 2,5 segundos é iniciado.
+   * Se o arquivo possui `oneDriveItemId` e `isDirty === true`, um timer com debounce de 7,5 segundos é iniciado.
    * Ao expirar a pausa na digitação, dispara `saveOneDriveFile`, grava a nova versão na nuvem, captura o `lastModifiedDateTime` e reseta `isDirty: false`.
 3. **Detecção Contínua de Atualizações da Nuvem (Polling Ativo & Eventos)**:
    * Monitorado continuamente por `useAutoSaveAndSync`:
@@ -81,7 +81,7 @@ O arquivo `src/index.css` define o comportamento visual uniforme entre títulos 
 
 1. **Limites de Rate Limit do OneDrive (HTTP 429)**:
    * O Microsoft Graph API impõe limites estritos de requisições por minuto.
-   * **Decisão**: É estritamente proibido disparar requisições HTTP PUT ao OneDrive a cada caractere digitado. O salvamento na nuvem deve sempre passar pelo debounce de 2,5 segundos, enquanto a persistência local (IndexedDB) ocorre imediatamente.
+   * **Decisão**: É estritamente proibido disparar requisições HTTP PUT ao OneDrive a cada caractere digitado. O salvamento na nuvem deve sempre passar pelo debounce de 7,5 segundos, enquanto a persistência local (IndexedDB) ocorre imediatamente.
 2. **Capacidade de Armazenamento**:
    * O `localStorage` do navegador é limitado a ~5MB compartilhados.
    * **Decisão**: O histórico completo dos 30 documentos reside no `IndexedDB` via biblioteca `idb-keyval`, garantindo centenas de megabytes sem risco de estourar cotas do navegador.

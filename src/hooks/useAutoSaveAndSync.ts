@@ -3,7 +3,7 @@ import { useAppStore } from '../store/useAppStore';
 import { saveOneDriveFile, getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDriveService';
 import { saveRecentDocument } from '../services/recentDocumentsService';
 
-const AUTOSAVE_DEBOUNCE_DELAY_MS = 2500; // 2.5 segundos de pausa após digitação
+const AUTOSAVE_DEBOUNCE_DELAY_MS = 7500; // 7.5 segundos de pausa após digitação
 const CLOUD_POLL_INTERVAL_MS = 10000; // Polling ativo a cada 10 segundos enquanto aberto na tela
 
 export function useAutoSaveAndSync() {
