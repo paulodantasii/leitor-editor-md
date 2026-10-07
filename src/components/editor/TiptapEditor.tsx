@@ -20,11 +20,17 @@ import { CustomHighlight } from './CustomHighlight';
 import { HighlightPopover } from './HighlightPopover';
 import { EditorToolbar } from './EditorToolbar';
 import { HighlightColor } from '../../types';
+import {
+  registerEditorFlushHandler,
+  markBridgeDirty,
+  markBridgeClean,
+} from '../../services/editorContentBridge';
 
 export const TiptapEditor: React.FC = () => {
   const {
     document: currentDoc,
     updateDocumentContent,
+    markDocumentDirty,
     isHighlightMode,
     isEditable,
     preferences,
@@ -34,6 +40,9 @@ export const TiptapEditor: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const isMouseDownRef = useRef(false);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastEmittedMarkdownRef = useRef<string | null>(null);
+  const markdownDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // State to control popover visibility: only opens on explicit click on a highlight mark
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -57,6 +66,9 @@ export const TiptapEditor: React.FC = () => {
       window.removeEventListener('mouseup', handleUp);
     };
   }, []);
+
+  const editorRef = useRef<Editor | null>(null);
+  const scheduleDebouncedContentRef = useRef<() => void>(() => {});
 
   // Accurately counts unique connected highlight entities
   const updateHighlightCount = useCallback(
@@ -85,6 +97,18 @@ export const TiptapEditor: React.FC = () => {
       setHighlightCount(uniqueIds.size + unassignedCount);
     },
     [setHighlightCount]
+  );
+
+  const scheduleDebouncedHighlightCount = useCallback(
+    (ed: Editor | null) => {
+      if (highlightCountDebounceTimerRef.current) {
+        clearTimeout(highlightCountDebounceTimerRef.current);
+      }
+      highlightCountDebounceTimerRef.current = setTimeout(() => {
+        updateHighlightCount(ed);
+      }, 350);
+    },
+    [updateHighlightCount]
   );
 
   // Initialize Tiptap Editor
@@ -129,19 +153,18 @@ export const TiptapEditor: React.FC = () => {
     ],
     content: currentDoc.content,
     editable: isEditable,
-    onUpdate: ({ editor, transaction }) => {
+    onUpdate: ({ editor: currentEditor, transaction }) => {
       if (!transaction.docChanged) return;
-      const rawMarkdown = editor.storage.markdown.getMarkdown();
-      updateDocumentContent(rawMarkdown);
-      updateHighlightCount(editor);
+      scheduleDebouncedContentRef.current();
+      scheduleDebouncedHighlightCount(currentEditor);
     },
-    onSelectionUpdate: ({ editor }) => {
-      if (!editor) return;
+    onSelectionUpdate: ({ editor: currentEditor }) => {
+      if (!currentEditor) return;
 
-      const { from, to } = editor.state.selection;
+      const { from, to } = currentEditor.state.selection;
 
       // Case A: User selected a text range in Highlight Mode -> APPLY HIGHLIGHT (Yellow standard, no popover)
-      if (isHighlightMode && !editor.isDestroyed && from !== to) {
+      if (isHighlightMode && !currentEditor.isDestroyed && from !== to) {
         // Prevent instant highlight while dragging on PC
         if (isMouseDownRef.current) return;
 
@@ -151,13 +174,13 @@ export const TiptapEditor: React.FC = () => {
         }
 
         highlightTimeoutRef.current = setTimeout(() => {
-          const currentSel = editor.state.selection;
+          const currentSel = currentEditor.state.selection;
           if (currentSel.from !== currentSel.to) {
             const uniqueId = Math.random().toString(36).substring(2, 6);
 
             setPopoverOpen(false);
 
-            editor
+            currentEditor
               .chain()
               .focus()
               .setCustomHighlight({ color: 'yellow', id: uniqueId })
@@ -172,27 +195,96 @@ export const TiptapEditor: React.FC = () => {
               }
             }, 20);
 
-            updateHighlightCount(editor);
+            scheduleDebouncedHighlightCount(currentEditor);
           }
         }, 250);
       }
     },
   });
 
+  editorRef.current = editor;
+
+  // Flushes pending in-memory editor changes immediately to store and local storage
+  const flushContent = useCallback(() => {
+    if (markdownDebounceTimerRef.current) {
+      clearTimeout(markdownDebounceTimerRef.current);
+      markdownDebounceTimerRef.current = null;
+    }
+    const currentEditor = editorRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return;
+
+    const rawMarkdown = currentEditor.storage.markdown.getMarkdown();
+    lastEmittedMarkdownRef.current = rawMarkdown;
+    markBridgeClean();
+    updateDocumentContent(rawMarkdown);
+    updateHighlightCount(currentEditor);
+  }, [updateDocumentContent, updateHighlightCount]);
+
+  const scheduleDebouncedContent = useCallback(() => {
+    markDocumentDirty();
+    markBridgeDirty();
+
+    if (markdownDebounceTimerRef.current) {
+      clearTimeout(markdownDebounceTimerRef.current);
+    }
+    markdownDebounceTimerRef.current = setTimeout(() => {
+      flushContent();
+    }, 600);
+  }, [flushContent, markDocumentDirty]);
+
+  scheduleDebouncedContentRef.current = scheduleDebouncedContent;
+
+  // Register bridge flush handler & window lifecycle guards (background/close)
+  useEffect(() => {
+    const unregister = registerEditorFlushHandler(() => {
+      flushContent();
+    });
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushContent();
+      }
+    };
+
+    const handlePageHide = () => {
+      flushContent();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      unregister();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      if (markdownDebounceTimerRef.current) {
+        clearTimeout(markdownDebounceTimerRef.current);
+      }
+      if (highlightCountDebounceTimerRef.current) {
+        clearTimeout(highlightCountDebounceTimerRef.current);
+      }
+    };
+  }, [flushContent]);
+
   // Update content when document changes externally or docId switches
   useEffect(() => {
     if (!editor) return;
 
+    // Ignore self-emitted updates (breaks echoing cycle and eliminates redundant re-serializations)
+    if (lastEmittedMarkdownRef.current !== null && currentDoc.content === lastEmittedMarkdownRef.current) {
+      return;
+    }
+
     if (currentDoc.content === '') {
+      lastEmittedMarkdownRef.current = '';
       editor.commands.clearContent(false);
       updateHighlightCount(editor);
       return;
     }
 
-    if (editor.storage.markdown.getMarkdown().trim() !== currentDoc.content.trim()) {
-      editor.commands.setContent(currentDoc.content, false);
-      updateHighlightCount(editor);
-    }
+    lastEmittedMarkdownRef.current = currentDoc.content;
+    editor.commands.setContent(currentDoc.content, false);
+    updateHighlightCount(editor);
   }, [currentDoc.docId, currentDoc.content, editor, updateHighlightCount]);
 
   // Update editor editable mode

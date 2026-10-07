@@ -38,20 +38,62 @@ export function saveUserPreferences(prefs: UserPreferences): void {
   }
 }
 
-/**
- * Saves active document state to LocalStorage and IndexedDB recent documents (up to 30 files).
- */
-export function saveLocalDocument(docState: DocumentState): void {
+let pendingSaveDoc: DocumentState | null = null;
+let saveDebounceTimer: NodeJS.Timeout | null = null;
+
+function performSaveDoc(docState: DocumentState): void {
   try {
     localStorage.setItem(DOC_KEY, JSON.stringify(docState));
   } catch (err) {
-    console.error('Failed to save document to local storage', err);
+    console.warn('Falha ao salvar backup síncrono no localStorage (armazenamento prioritário permanece no IndexedDB):', err);
   }
 
-  // Also maintain in IndexedDB recent documents collection
+  // Maintain in IndexedDB recent documents collection
   saveRecentDocument(docState).catch((err) => {
-    console.warn('Failed to save document to recent documents index:', err);
+    console.warn('Falha ao salvar documento no histórico do IndexedDB:', err);
   });
+}
+
+/**
+ * Saves active document state with coalescing (debounce) to prevent I/O saturation.
+ * Pass immediate = true to bypass queue and persist synchronously.
+ */
+export function saveLocalDocument(docState: DocumentState, immediate: boolean = false): void {
+  pendingSaveDoc = docState;
+
+  if (immediate) {
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = null;
+    }
+    performSaveDoc(docState);
+    pendingSaveDoc = null;
+    return;
+  }
+
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+  }
+
+  saveDebounceTimer = setTimeout(() => {
+    if (pendingSaveDoc) {
+      performSaveDoc(pendingSaveDoc);
+      pendingSaveDoc = null;
+    }
+    saveDebounceTimer = null;
+  }, 400);
+}
+
+/**
+ * Immediately flushes any pending debounced local document save to storage.
+ */
+export function flushPendingLocalDocumentSave(): void {
+  if (saveDebounceTimer && pendingSaveDoc) {
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+    performSaveDoc(pendingSaveDoc);
+    pendingSaveDoc = null;
+  }
 }
 
 /**

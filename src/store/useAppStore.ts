@@ -39,6 +39,7 @@ interface AppState {
   document: DocumentState;
   setDocument: (doc: Partial<DocumentState>) => void;
   updateDocumentContent: (content: string) => void;
+  markDocumentDirty: () => void;
   loadCachedDocument: () => void;
   createNewDocument: () => void;
 
@@ -150,6 +151,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const updated = { ...state.document, content, isDirty: true };
       saveLocalDocument(updated);
       return { document: updated };
+    });
+  },
+  markDocumentDirty: () => {
+    set((state) => {
+      if (state.document.isDirty) return state;
+      return { document: { ...state.document, isDirty: true } };
     });
   },
   loadCachedDocument: () => {

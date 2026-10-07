@@ -151,6 +151,19 @@ mark.gray {
   --paragraph-spacing: 1.25em;
 }
 
+/* Renderização de alta performance para documentos extensos:
+   Pula cálculo de layout/pintura de nós fora da tela enquanto preserva busca nativa (Ctrl+F) e seleção */
+.ProseMirror > p,
+.ProseMirror > blockquote,
+.ProseMirror > ul,
+.ProseMirror > ol,
+.ProseMirror > .tableWrapper,
+.ProseMirror > table,
+.ProseMirror > pre {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 3.5rem;
+}
+
 .ProseMirror p {
   margin-top: 0;
   margin-bottom: var(--paragraph-spacing);
@@ -624,6 +637,18 @@ mark.gray {
 
   .ProseMirror {
     --paragraph-spacing: 0.9em !important;
+  }
+
+  /* Desativa content-visibility na impressão para forçar a renderização completa em todas as páginas */
+  .ProseMirror > p,
+  .ProseMirror > blockquote,
+  .ProseMirror > ul,
+  .ProseMirror > ol,
+  .ProseMirror > .tableWrapper,
+  .ProseMirror > table,
+  .ProseMirror > pre {
+    content-visibility: visible !important;
+    contain-intrinsic-size: auto !important;
   }
 
   /* Typography formatting for printed page */

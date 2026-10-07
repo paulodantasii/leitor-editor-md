@@ -92,12 +92,11 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
     // Save to IndexedDB (asynchronous, high capacity)
     await set(RECENT_DOCS_KEY, updatedList);
 
-    // Defensive backup to localStorage (metadata & lightweight snapshot)
+    // Defensive backup to localStorage (metadata-only snapshot to preserve quota and avoid UI freezes)
     try {
       const lightweightBackup = updatedList.map((item) => ({
         ...item,
-        // If content is very large, truncate in localStorage backup to preserve quota
-        content: item.content.length > 50000 ? item.content.slice(0, 50000) : item.content,
+        content: '', // Content is fully preserved in IndexedDB; localStorage backup retains document index only
       }));
       localStorage.setItem(RECENT_DOCS_BACKUP_KEY, JSON.stringify(lightweightBackup));
     } catch {

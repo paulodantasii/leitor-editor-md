@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { loginWithOneDrive, logoutOneDrive, getActiveAccount } from '../../services/msalService';
 import { listOneDriveItems, downloadOneDriveFile, saveOneDriveFile } from '../../services/oneDriveService';
+import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { OneDriveItem } from '../../types';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { X, Cloud, Folder, FileCode, LogIn, LogOut, RefreshCw, UploadCloud, ChevronRight, Settings } from 'lucide-react';
@@ -153,7 +154,9 @@ export const OneDriveModal: React.FC = () => {
   const handleConfirmSaveFromGuard = async () => {
     try {
       if (currentDoc.oneDriveItemId) {
-        await saveOneDriveFile(currentDoc.oneDriveItemId, currentDoc.content);
+        flushPendingEditorContent();
+        const freshContent = useAppStore.getState().document.content;
+        await saveOneDriveFile(currentDoc.oneDriveItemId, freshContent);
       }
       setDocument({ isDirty: false, lastSavedAt: new Date().toLocaleTimeString() });
     } catch (err) {
@@ -177,7 +180,9 @@ export const OneDriveModal: React.FC = () => {
     setIsLoading(true);
     setSyncStatus('saving');
     try {
-      await saveOneDriveFile(currentDoc.oneDriveItemId, currentDoc.content);
+      flushPendingEditorContent();
+      const freshContent = useAppStore.getState().document.content;
+      await saveOneDriveFile(currentDoc.oneDriveItemId, freshContent);
       setSyncStatus('saved');
       setDocument({ isDirty: false, lastSavedAt: new Date().toLocaleTimeString() });
       setIsOneDriveModalOpen(false);

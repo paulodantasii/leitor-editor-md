@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { downloadMarkdownFile } from '../../services/exportService';
+import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { AlertTriangle, Cloud, HardDrive, Download, X } from 'lucide-react';
 
 export const CloudConflictModal: React.FC = () => {
@@ -43,7 +44,9 @@ export const CloudConflictModal: React.FC = () => {
 
   const handleBackupAndAcceptCloud = () => {
     // Download current unsaved local changes to device
-    downloadMarkdownFile(currentDoc.content, `backup_local_${currentDoc.title}`);
+    flushPendingEditorContent();
+    const freshDoc = useAppStore.getState().document;
+    downloadMarkdownFile(freshDoc.content, `backup_local_${freshDoc.title}`);
     handleAcceptCloud();
   };
 

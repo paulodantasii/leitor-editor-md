@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { saveOneDriveFile, getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDriveService';
 import { saveRecentDocument } from '../services/recentDocumentsService';
+import { flushPendingEditorContent } from '../services/editorContentBridge';
 
 const AUTOSAVE_DEBOUNCE_DELAY_MS = 7500; // 7.5 segundos de pausa após digitação
 const CLOUD_POLL_INTERVAL_MS = 10000; // Polling ativo a cada 10 segundos enquanto aberto na tela
@@ -61,7 +62,9 @@ export function useAutoSaveAndSync() {
 
       try {
         setSyncStatus('saving');
-        const updatedItem = await saveOneDriveFile(currentDoc.oneDriveItemId!, currentDoc.content);
+        flushPendingEditorContent();
+        const freshContent = useAppStore.getState().document.content;
+        const updatedItem = await saveOneDriveFile(currentDoc.oneDriveItemId!, freshContent);
 
         const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 

@@ -2,20 +2,50 @@ import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 
 export const ReadingProgress: React.FC = () => {
-  const { document: currentDoc } = useAppStore();
+  const docContent = useAppStore((state) => state.document.content);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [wordCount, setWordCount] = useState(0);
 
   useEffect(() => {
-    if (!currentDoc.content) {
+    if (!docContent) {
       setWordCount(0);
       return;
     }
-    // Remove HTML tags to count words accurately
-    const textContent = currentDoc.content.replace(/<[^>]*>?/gm, '');
-    const words = textContent.trim().split(/\s+/).filter((w) => w.length > 0);
-    setWordCount(words.length);
-  }, [currentDoc.content]);
+
+    const timer = setTimeout(() => {
+      // Contagem de alta performance sem alocação massiva de arrays no heap
+      let count = 0;
+      let inWord = false;
+      let inTag = false;
+      const len = docContent.length;
+
+      for (let i = 0; i < len; i++) {
+        const ch = docContent.charCodeAt(i);
+        if (ch === 60 /* < */) {
+          inTag = true;
+          inWord = false;
+          continue;
+        }
+        if (ch === 62 /* > */) {
+          inTag = false;
+          continue;
+        }
+        if (inTag) continue;
+
+        // Whitespace check: espaço (32), quebra de linha (10), CR (13), tab (9)
+        if (ch <= 32) {
+          inWord = false;
+        } else if (!inWord) {
+          inWord = true;
+          count++;
+        }
+      }
+
+      setWordCount(count);
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [docContent]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -43,7 +73,7 @@ export const ReadingProgress: React.FC = () => {
     };
   }, []);
 
-  if (!currentDoc.content) return null;
+  if (!docContent) return null;
 
   const totalMinutes = wordCount / 130;
   const remainingMinutes = Math.ceil(totalMinutes * ((100 - scrollProgress) / 100));

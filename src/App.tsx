@@ -14,7 +14,11 @@ import { useAutoSaveAndSync } from './hooks/useAutoSaveAndSync';
 import { getActiveAccount } from './services/msalService';
 
 export const App: React.FC = () => {
-  const { preferences, document: currentDoc, loadCachedDocument, toggleHighlightMode, setUserProfile } = useAppStore();
+  const theme = useAppStore((state) => state.preferences.theme);
+  const docTitle = useAppStore((state) => state.document.title);
+  const loadCachedDocument = useAppStore((state) => state.loadCachedDocument);
+  const toggleHighlightMode = useAppStore((state) => state.toggleHighlightMode);
+  const setUserProfile = useAppStore((state) => state.setUserProfile);
 
   // Restore MSAL session on boot so background cloud sync is immediately active
   useEffect(() => {
@@ -37,9 +41,9 @@ export const App: React.FC = () => {
 
   // Sync document title in browser tab
   useEffect(() => {
-    const cleanTitle = currentDoc.title ? currentDoc.title.replace(/\.(md|markdown|txt)$/i, '').trim() : '';
+    const cleanTitle = docTitle ? docTitle.replace(/\.(md|markdown|txt)$/i, '').trim() : '';
     document.title = cleanTitle ? `${cleanTitle} - Leitor & Editor MD` : 'Leitor & Editor Markdown PWA';
-  }, [currentDoc.title]);
+  }, [docTitle]);
 
   // Show Welcome screen if opening browser from scratch (sessionStorage empty)
   const [showWelcome, setShowWelcome] = useState<boolean>(() => {
@@ -91,14 +95,14 @@ export const App: React.FC = () => {
   // Sync theme class on document element & meta theme-color
   useEffect(() => {
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
-    if (preferences.theme === 'dark') {
+    if (theme === 'dark') {
       document.documentElement.classList.add('dark');
       if (themeColorMeta) themeColorMeta.setAttribute('content', '#0f172a');
     } else {
       document.documentElement.classList.remove('dark');
       if (themeColorMeta) themeColorMeta.setAttribute('content', '#ffffff');
     }
-  }, [preferences.theme]);
+  }, [theme]);
 
   const handleContinueLast = () => {
     sessionStorage.setItem('has_active_session', 'true');

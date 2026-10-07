@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../store/useAppStore';
 import { AppearanceMenu } from './AppearanceMenu';
 import { UnsavedChangesModal, GuardActionType } from '../modals/UnsavedChangesModal';
@@ -24,10 +25,21 @@ import {
   History,
 } from 'lucide-react';
 import { forceAppUpdate } from '../../services/appUpdateService';
+import { flushPendingEditorContent } from '../../services/editorContentBridge';
 
 export const Header: React.FC = () => {
+  // Seletor de metadados: NÃO re-renderiza quando o conteúdo Markdown do texto é alterado
+  const currentDoc = useAppStore(
+    useShallow((state) => ({
+      title: state.document.title,
+      isDirty: state.document.isDirty,
+      lastSavedAt: state.document.lastSavedAt,
+      oneDriveItemId: state.document.oneDriveItemId,
+      docId: state.document.docId,
+    }))
+  );
+
   const {
-    document: currentDoc,
     setDocument,
     fileHandle,
     setFileHandle,
@@ -44,7 +56,26 @@ export const Header: React.FC = () => {
     createNewDocument,
     recentDocuments,
     setIsRecentModalOpen,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      setDocument: state.setDocument,
+      fileHandle: state.fileHandle,
+      setFileHandle: state.setFileHandle,
+      isHighlightMode: state.isHighlightMode,
+      toggleHighlightMode: state.toggleHighlightMode,
+      isEditable: state.isEditable,
+      setIsEditable: state.setIsEditable,
+      highlightCount: state.highlightCount,
+      syncStatus: state.syncStatus,
+      setSyncStatus: state.setSyncStatus,
+      userProfile: state.userProfile,
+      setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
+      setIsSettingsModalOpen: state.setIsSettingsModalOpen,
+      createNewDocument: state.createNewDocument,
+      recentDocuments: state.recentDocuments,
+      setIsRecentModalOpen: state.setIsRecentModalOpen,
+    }))
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -189,8 +220,10 @@ export const Header: React.FC = () => {
 
   // Start Blank File with Intelligent Confirmation & Save Option
   const handleNewFile = () => {
-    const hasContent = Boolean(currentDoc.content && currentDoc.content.trim().length > 0);
-    const isDirty = currentDoc.isDirty;
+    flushPendingEditorContent();
+    const activeDoc = useAppStore.getState().document;
+    const hasContent = Boolean(activeDoc.content && activeDoc.content.trim().length > 0);
+    const isDirty = activeDoc.isDirty;
 
     if (isDirty || hasContent) {
       pendingActionRef.current = () => {
@@ -275,7 +308,8 @@ export const Header: React.FC = () => {
 
   // Save File with iPad / Mobile Resilience
   const handleSaveFile = async () => {
-    const contentToSave = currentDoc.content;
+    flushPendingEditorContent();
+    const contentToSave = useAppStore.getState().document.content;
 
     try {
       if (fileHandle && typeof fileHandle.createWritable === 'function') {
@@ -331,11 +365,14 @@ export const Header: React.FC = () => {
 
   // Export Standalone MD Copy
   const handleExportMD = () => {
-    downloadMarkdownFile(currentDoc.content, currentDoc.title || 'documento.md');
+    flushPendingEditorContent();
+    const freshDoc = useAppStore.getState().document;
+    downloadMarkdownFile(freshDoc.content, freshDoc.title || 'documento.md');
   };
 
   // Print Clean Reader Page / Save as PDF
   const handlePrint = () => {
+    flushPendingEditorContent();
     printDocument(currentDoc.title || 'documento');
   };
 

@@ -30,10 +30,10 @@ Aplicação web progressiva (PWA) de alta performance desenvolvida para leitura,
 ```
 
 ### Ciclo de Vida do Documento e Sincronização:
-1. **Entrada de Conteúdo**:
-   * O editor TipTap atualiza o store via `updateDocumentContent`.
-   * A flag `isDirty` é ativada (`true`).
-   * O documento ativo é persistido imediatamente (0 ms) no armazenamento local (IndexedDB / LocalStorage).
+1. **Entrada de Conteúdo e Serialização Preguiçosa**:
+   * O editor TipTap mantém o estado do documento ativo em memória e sinaliza alteração no store (`markDocumentDirty`) instantaneamente.
+   * A conversão integral para Markdown (`getMarkdown`) é realizada com debounce de 600 ms após a pausa na digitação, ou forçada de imediato através de `flushPendingEditorContent()` antes de qualquer operação externa (salvar, exportar, trocar de aba ou enviar à nuvem).
+   * O documento ativo é persistido no armazenamento local de forma coalescida (`saveLocalDocument` com buffer de 400 ms) para evitar saturação de I/O em arquivos extensos, com garantia de flush síncrono.
 2. **Salvamento Automático no OneDrive**:
    * Monitorado pelo hook `useAutoSaveAndSync`.
    * Se o arquivo possui `oneDriveItemId` e `isDirty === true`, um timer com debounce de 7,5 segundos é iniciado.
@@ -60,6 +60,7 @@ O arquivo `src/index.css` define o comportamento visual uniforme entre títulos 
   * `margin-top: 0;`
   * `margin-bottom: var(--paragraph-spacing);`
 * **Garantia Arquitetural**: A distância vertical entre qualquer título e o parágrafo abaixo (ou acima) é matematicamente idêntica à distância que separa dois parágrafos comuns de texto, respeitando estritamente o modelo de linhas em branco do Markdown.
+* **Renderização Otimizada para Textos Extensos**: Os blocos de conteúdo diretos (`p`, `blockquote`, listas, tabelas, blocos de código) utilizam `content-visibility: auto` com `contain-intrinsic-size: auto 3.5rem`. Isso instrui o motor gráfico a calcular layout e pintura exclusivamente para os blocos visíveis na tela, sem perder a capacidade nativa de busca (Ctrl+F) e seleção. No `@media print`, essa propriedade é desativada para renderização integral das páginas.
 
 ---
 
@@ -71,6 +72,7 @@ O arquivo `src/index.css` define o comportamento visual uniforme entre títulos 
 * `openRecentDocument(item)`: abre documento do histórico com atualização automática da nuvem se for do OneDrive.
 
 ### Serviços Principais (`src/services/`):
+* `editorContentBridge.ts`: canal síncrono para forçar a exportação do documento do ProseMirror para o store antes de leituras críticas (`flushPendingEditorContent`).
 * `recentDocumentsService.ts`: gerencia a coleção de até 30 arquivos no IndexedDB com fallback defensivo.
 * `oneDriveService.ts`: chamadas REST para Microsoft Graph API (`listOneDriveItems`, `downloadOneDriveFile`, `saveOneDriveFile`, `getOneDriveItemMetadata`).
 * `storage.ts`: persistência local síncrona/assíncrona de preferências e documento ativo.
@@ -88,3 +90,6 @@ O arquivo `src/index.css` define o comportamento visual uniforme entre títulos 
 3. **ExecutionPolicy no Windows PowerShell**:
    * O script `npm.ps1` é bloqueado por padrão pelas políticas de segurança do Windows.
    * **Decisão**: Utilize sempre `npm.cmd run dev` ou `npm.cmd run build` ao invocar comandos no shell Windows.
+4. **Serialização Preguiçosa e Leitura de Conteúdo do Documento**:
+   * O ProseMirror gerencia a árvore sintática em memória durante a edição contínua para evitar travamentos de conversão em documentos extensos.
+   * **Decisão**: Todo novo módulo ou rotina que necessite ler `document.content` para download, impressão ou envio externo DEVE invocar `flushPendingEditorContent()` imediatamente antes da leitura.
