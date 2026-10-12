@@ -168,6 +168,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       isDirty: false,
       docId: 'doc-sample',
     };
+    if ((cached as any).storedInDb && !cached.content) {
+      getRecentDocuments().then((recents) => {
+        if (recents.length > 0 && recents[0].content) {
+          set({ document: { ...recents[0], isDirty: false, docId: recents[0].id || `doc-${Date.now()}` } });
+        }
+      });
+    }
     set({ document: { ...cached, docId: cached.docId || `doc-${Date.now()}` } });
   },
   createNewDocument: () => {

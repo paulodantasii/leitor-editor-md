@@ -36,6 +36,23 @@ export const CustomHighlight = Mark.create<CustomHighlightOptions>({
     };
   },
 
+  addStorage() {
+    return {
+      markdown: {
+        serialize: {
+          open(_state: any, mark: any) {
+            const color = mark.attrs?.color || 'yellow';
+            const id = mark.attrs?.id;
+            return `<mark class="${color}"${id ? ` data-id="${id}"` : ''}>`;
+          },
+          close() {
+            return '</mark>';
+          },
+        },
+      },
+    };
+  },
+
   addAttributes() {
     return {
       color: {

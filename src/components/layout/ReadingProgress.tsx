@@ -13,36 +13,44 @@ export const ReadingProgress: React.FC = () => {
     }
 
     const timer = setTimeout(() => {
-      // Contagem de alta performance sem alocação massiva de arrays no heap
-      let count = 0;
-      let inWord = false;
-      let inTag = false;
-      const len = docContent.length;
+      const runCount = () => {
+        // Contagem de alta performance sem alocação massiva de arrays no heap
+        let count = 0;
+        let inWord = false;
+        let inTag = false;
+        const len = docContent.length;
 
-      for (let i = 0; i < len; i++) {
-        const ch = docContent.charCodeAt(i);
-        if (ch === 60 /* < */) {
-          inTag = true;
-          inWord = false;
-          continue;
-        }
-        if (ch === 62 /* > */) {
-          inTag = false;
-          continue;
-        }
-        if (inTag) continue;
+        for (let i = 0; i < len; i++) {
+          const ch = docContent.charCodeAt(i);
+          if (ch === 60 /* < */) {
+            inTag = true;
+            inWord = false;
+            continue;
+          }
+          if (ch === 62 /* > */) {
+            inTag = false;
+            continue;
+          }
+          if (inTag) continue;
 
-        // Whitespace check: espaço (32), quebra de linha (10), CR (13), tab (9)
-        if (ch <= 32) {
-          inWord = false;
-        } else if (!inWord) {
-          inWord = true;
-          count++;
+          // Whitespace check: espaço (32), quebra de linha (10), CR (13), tab (9)
+          if (ch <= 32) {
+            inWord = false;
+          } else if (!inWord) {
+            inWord = true;
+            count++;
+          }
         }
+
+        setWordCount(count);
+      };
+
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(runCount, { timeout: 2000 });
+      } else {
+        runCount();
       }
-
-      setWordCount(count);
-    }, 400);
+    }, 600);
 
     return () => clearTimeout(timer);
   }, [docContent]);

@@ -43,7 +43,19 @@ let saveDebounceTimer: NodeJS.Timeout | null = null;
 
 function performSaveDoc(docState: DocumentState): void {
   try {
-    localStorage.setItem(DOC_KEY, JSON.stringify(docState));
+    // Para documentos muito grandes (> 400KB), o payload pode travar a thread síncrona
+    // do localStorage ou estourar a cota de 5MB. Salvamos o snapshot com storedInDb: true
+    // no localStorage, enquanto o IndexedDB (assíncrono) retém o conteúdo integral.
+    if (docState.content && docState.content.length > 400000) {
+      const lightweight = {
+        ...docState,
+        content: '',
+        storedInDb: true,
+      };
+      localStorage.setItem(DOC_KEY, JSON.stringify(lightweight));
+    } else {
+      localStorage.setItem(DOC_KEY, JSON.stringify(docState));
+    }
   } catch (err) {
     console.warn('Falha ao salvar backup síncrono no localStorage (armazenamento prioritário permanece no IndexedDB):', err);
   }

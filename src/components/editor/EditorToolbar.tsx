@@ -52,7 +52,7 @@ const COLOR_BAR_MAP: Record<HighlightColor, string> = {
   gray: 'bg-slate-400',
 };
 
-export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
+export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor }) => {
   const [isHighlightMenuOpen, setIsHighlightMenuOpen] = useState(false);
   const [menuCoords, setMenuCoords] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -161,7 +161,10 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
       // Cursor is collapsed inside an existing highlight -> update all parts of this highlight entity
       const { tr } = editor.state;
       let modified = false;
-      tr.doc.descendants((node, pos) => {
+      const searchFrom = Math.max(0, from - 5000);
+      const searchTo = Math.min(tr.doc.content.size, to + 5000);
+
+      tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
         if (!node.isText) return;
         const mark = node.marks.find(
           (m) => m.type.name === 'customHighlight' && m.attrs.id === existingId
@@ -173,6 +176,22 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
           modified = true;
         }
       });
+
+      if (!modified) {
+        tr.doc.descendants((node, pos) => {
+          if (!node.isText) return;
+          const mark = node.marks.find(
+            (m) => m.type.name === 'customHighlight' && m.attrs.id === existingId
+          );
+          if (mark) {
+            tr.removeMark(pos, pos + node.nodeSize, mark.type);
+            const newMark = mark.type.create({ ...mark.attrs, color });
+            tr.addMark(pos, pos + node.nodeSize, newMark);
+            modified = true;
+          }
+        });
+      }
+
       if (modified) {
         editor.view.dispatch(tr);
       }
@@ -192,7 +211,10 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
       // Cursor is collapsed inside an existing highlight -> remove all parts of this entity
       const { tr } = editor.state;
       let modified = false;
-      tr.doc.descendants((node, pos) => {
+      const searchFrom = Math.max(0, from - 5000);
+      const searchTo = Math.min(tr.doc.content.size, to + 5000);
+
+      tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
         if (!node.isText) return;
         const mark = node.marks.find(
           (m) => m.type.name === 'customHighlight' && m.attrs.id === existingId
@@ -202,6 +224,20 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
           modified = true;
         }
       });
+
+      if (!modified) {
+        tr.doc.descendants((node, pos) => {
+          if (!node.isText) return;
+          const mark = node.marks.find(
+            (m) => m.type.name === 'customHighlight' && m.attrs.id === existingId
+          );
+          if (mark) {
+            tr.removeMark(pos, pos + node.nodeSize, mark.type);
+            modified = true;
+          }
+        });
+      }
+
       if (modified) {
         editor.view.dispatch(tr);
       }
@@ -721,4 +757,4 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
       </div>
     </div>
   );
-};
+});

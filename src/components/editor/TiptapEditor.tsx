@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useEditor, EditorContent, Editor, BubbleMenu } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
@@ -24,23 +25,30 @@ import {
   registerEditorFlushHandler,
   markBridgeDirty,
   markBridgeClean,
+  hasPendingBridgeChanges,
 } from '../../services/editorContentBridge';
 
 export const TiptapEditor: React.FC = () => {
-  const {
-    document: currentDoc,
-    updateDocumentContent,
-    markDocumentDirty,
-    isHighlightMode,
-    isEditable,
-    preferences,
-    setHighlightCount,
-  } = useAppStore();
+  // Fine-grained selectors: avoids re-rendering TiptapEditor on every content change / sync update
+  const docId = useAppStore((state) => state.document.docId);
+  const isHighlightMode = useAppStore((state) => state.isHighlightMode);
+  const isEditable = useAppStore((state) => state.isEditable);
+  const preferences = useAppStore(
+    useShallow((state) => ({
+      fontSize: state.preferences.fontSize,
+      fontFamily: state.preferences.fontFamily,
+      textWidth: state.preferences.textWidth,
+    }))
+  );
+  const updateDocumentContent = useAppStore((state) => state.updateDocumentContent);
+  const markDocumentDirty = useAppStore((state) => state.markDocumentDirty);
+  const setHighlightCount = useAppStore((state) => state.setHighlightCount);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isMouseDownRef = useRef(false);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastEmittedMarkdownRef = useRef<string | null>(null);
+  const currentLoadedDocIdRef = useRef<string | null | undefined>(null);
   const markdownDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -70,31 +78,38 @@ export const TiptapEditor: React.FC = () => {
   const editorRef = useRef<Editor | null>(null);
   const scheduleDebouncedContentRef = useRef<() => void>(() => {});
 
-  // Accurately counts unique connected highlight entities
+  // High-performance highlight counting directly from in-memory ProseMirror doc tree
   const updateHighlightCount = useCallback(
     (ed: Editor | null) => {
-      if (!ed || !containerRef.current) return;
-      const allMarks = Array.from(containerRef.current.querySelectorAll('mark'));
+      if (!ed || ed.isDestroyed) return;
 
-      if (allMarks.length === 0) {
-        setHighlightCount(0);
-        return;
+      const runCount = () => {
+        if (!ed || ed.isDestroyed) return;
+        const uniqueIds = new Set<string>();
+        let unassignedCount = 0;
+
+        ed.state.doc.descendants((node) => {
+          if (!node.isText) return;
+          for (let i = 0; i < node.marks.length; i++) {
+            const mark = node.marks[i];
+            if (mark.type.name === 'customHighlight') {
+              if (mark.attrs.id) {
+                uniqueIds.add(mark.attrs.id);
+              } else {
+                unassignedCount++;
+              }
+            }
+          }
+        });
+
+        setHighlightCount(uniqueIds.size + unassignedCount);
+      };
+
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(runCount, { timeout: 2000 });
+      } else {
+        setTimeout(runCount, 150);
       }
-
-      // Group marks by unique data-id
-      const uniqueIds = new Set<string>();
-      let unassignedCount = 0;
-
-      for (let i = 0; i < allMarks.length; i++) {
-        const hlId = allMarks[i].getAttribute('data-id');
-        if (hlId) {
-          uniqueIds.add(hlId);
-        } else {
-          unassignedCount++;
-        }
-      }
-
-      setHighlightCount(uniqueIds.size + unassignedCount);
     },
     [setHighlightCount]
   );
@@ -106,7 +121,7 @@ export const TiptapEditor: React.FC = () => {
       }
       highlightCountDebounceTimerRef.current = setTimeout(() => {
         updateHighlightCount(ed);
-      }, 350);
+      }, 1200);
     },
     [updateHighlightCount]
   );
@@ -143,15 +158,39 @@ export const TiptapEditor: React.FC = () => {
       TableHeader,
       TableCell,
       TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote', 'tableCell', 'tableHeader'] }),
-      Underline,
-      Subscript,
-      Superscript,
+      Underline.extend({
+        addStorage() {
+          return {
+            markdown: {
+              serialize: { open: '<u>', close: '</u>' },
+            },
+          };
+        },
+      }),
+      Subscript.extend({
+        addStorage() {
+          return {
+            markdown: {
+              serialize: { open: '<sub>', close: '</sub>' },
+            },
+          };
+        },
+      }),
+      Superscript.extend({
+        addStorage() {
+          return {
+            markdown: {
+              serialize: { open: '<sup>', close: '</sup>' },
+            },
+          };
+        },
+      }),
       TextStyle,
       Color,
       CustomHighlight,
       Markdown.configure({ html: true, transformPastedText: true, transformCopiedText: true, breaks: true }),
     ],
-    content: currentDoc.content,
+    content: useAppStore.getState().document.content,
     editable: isEditable,
     onUpdate: ({ editor: currentEditor, transaction }) => {
       if (!transaction.docChanged) return;
@@ -163,12 +202,11 @@ export const TiptapEditor: React.FC = () => {
 
       const { from, to } = currentEditor.state.selection;
 
-      // Case A: User selected a text range in Highlight Mode -> APPLY HIGHLIGHT (Yellow standard, no popover)
+      // User selected a text range in Highlight Mode -> APPLY HIGHLIGHT
       if (isHighlightMode && !currentEditor.isDestroyed && from !== to) {
         // Prevent instant highlight while dragging on PC
         if (isMouseDownRef.current) return;
 
-        // On touch devices (iPad), native OS selection handles don't fire touchend when dragged.
         if (highlightTimeoutRef.current) {
           clearTimeout(highlightTimeoutRef.current);
         }
@@ -182,22 +220,13 @@ export const TiptapEditor: React.FC = () => {
 
             currentEditor
               .chain()
-              .focus()
               .setCustomHighlight({ color: 'yellow', id: uniqueId })
               .setTextSelection(currentSel.to)
               .run();
 
-            setTimeout(() => {
-              window.getSelection()?.removeAllRanges();
-              document.getSelection()?.empty();
-              if (document.activeElement instanceof HTMLElement) {
-                document.activeElement.blur();
-              }
-            }, 20);
-
             scheduleDebouncedHighlightCount(currentEditor);
           }
-        }, 250);
+        }, 200);
       }
     },
   });
@@ -213,6 +242,11 @@ export const TiptapEditor: React.FC = () => {
     const currentEditor = editorRef.current;
     if (!currentEditor || currentEditor.isDestroyed) return;
 
+    // Skip heavy serialization if there are no pending unsaved changes
+    if (!hasPendingBridgeChanges()) {
+      return;
+    }
+
     const rawMarkdown = currentEditor.storage.markdown.getMarkdown();
     lastEmittedMarkdownRef.current = rawMarkdown;
     markBridgeClean();
@@ -227,9 +261,10 @@ export const TiptapEditor: React.FC = () => {
     if (markdownDebounceTimerRef.current) {
       clearTimeout(markdownDebounceTimerRef.current);
     }
+    // Non-blocking 7s debounce during active typing to avoid blocking the main UI thread
     markdownDebounceTimerRef.current = setTimeout(() => {
       flushContent();
-    }, 600);
+    }, 7000);
   }, [flushContent, markDocumentDirty]);
 
   scheduleDebouncedContentRef.current = scheduleDebouncedContent;
@@ -266,16 +301,18 @@ export const TiptapEditor: React.FC = () => {
     };
   }, [flushContent]);
 
-  // Update content when document changes externally or docId switches
+  // Update content only when document switches externally (docId) or initial mount
   useEffect(() => {
     if (!editor) return;
 
-    // Ignore self-emitted updates (breaks echoing cycle and eliminates redundant re-serializations)
-    if (lastEmittedMarkdownRef.current !== null && currentDoc.content === lastEmittedMarkdownRef.current) {
+    if (currentLoadedDocIdRef.current === docId) {
       return;
     }
 
-    if (currentDoc.content === '') {
+    currentLoadedDocIdRef.current = docId;
+    const currentDoc = useAppStore.getState().document;
+
+    if (!currentDoc.content) {
       lastEmittedMarkdownRef.current = '';
       editor.commands.clearContent(false);
       updateHighlightCount(editor);
@@ -285,7 +322,7 @@ export const TiptapEditor: React.FC = () => {
     lastEmittedMarkdownRef.current = currentDoc.content;
     editor.commands.setContent(currentDoc.content, false);
     updateHighlightCount(editor);
-  }, [currentDoc.docId, currentDoc.content, editor, updateHighlightCount]);
+  }, [docId, editor, updateHighlightCount]);
 
   // Update editor editable mode
   useEffect(() => {
@@ -321,20 +358,11 @@ export const TiptapEditor: React.FC = () => {
 
         editor
           .chain()
-          .focus()
           .setCustomHighlight({ color: 'yellow', id: uniqueId })
           .setTextSelection(to)
           .run();
 
-        setTimeout(() => {
-          window.getSelection()?.removeAllRanges();
-          document.getSelection()?.empty();
-          if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur();
-          }
-        }, 30);
-
-        updateHighlightCount(editor);
+        scheduleDebouncedHighlightCount(editor);
       }
     };
 
@@ -358,7 +386,7 @@ export const TiptapEditor: React.FC = () => {
         container.removeEventListener('contextmenu', handleContextMenu);
       }
     };
-  }, [editor, isHighlightMode, isEditable, updateHighlightCount, setPopoverOpen]);
+  }, [editor, isHighlightMode, isEditable, scheduleDebouncedHighlightCount, setPopoverOpen]);
 
   // Ref to debounce touch and mouse events on mobile/iPad
   const lastPointerDownTimeRef = useRef(0);
@@ -401,22 +429,9 @@ export const TiptapEditor: React.FC = () => {
                 (!clickedId && !currentActiveId && pos >= currentSel.from - 2 && pos <= currentSel.to + 2 && editor.isActive('customHighlight')));
 
             if (isSameMark) {
-              // 2nd click: close the popover and clear mark selection
+              // 2nd click: close the popover and clear mark selection cleanly
               setPopoverOpen(false);
-              let clearPos = -1;
-              editor.state.doc.descendants((node, p) => {
-                if (clearPos !== -1) return false;
-                if (node.isText && !node.marks.some((m) => m.type.name === 'customHighlight')) {
-                  clearPos = p;
-                  return false;
-                }
-              });
-
-              if (clearPos >= 0) {
-                editor.commands.setTextSelection(clearPos);
-              } else {
-                editor.commands.setTextSelection(0);
-              }
+              editor.commands.setTextSelection(pos);
               window.getSelection()?.removeAllRanges();
               return;
             }
@@ -431,23 +446,9 @@ export const TiptapEditor: React.FC = () => {
         }
       }
 
-      // Clicked outside any mark (normal arrow cursor) -> deactivate popover if active
-      if (isPopoverOpenRef.current || editor.isActive('customHighlight')) {
+      // Clicked outside any mark (normal arrow cursor) -> deactivate popover if active without scanning doc
+      if (isPopoverOpenRef.current) {
         setPopoverOpen(false);
-        let clearPos = -1;
-        editor.state.doc.descendants((node, pos) => {
-          if (clearPos !== -1) return false;
-          if (node.isText && !node.marks.some(m => m.type.name === 'customHighlight')) {
-            clearPos = pos;
-            return false;
-          }
-        });
-
-        if (clearPos >= 0) {
-          editor.commands.setTextSelection(clearPos);
-        } else {
-          editor.commands.setTextSelection(0);
-        }
         window.getSelection()?.removeAllRanges();
       }
     };
@@ -476,8 +477,13 @@ export const TiptapEditor: React.FC = () => {
     if (existingId) {
       const { tr } = editor.state;
       let modified = false;
-      
-      tr.doc.descendants((node, pos) => {
+      const { from, to } = editor.state.selection;
+
+      // Localized search range (10000 characters) around current selection
+      const searchFrom = Math.max(0, from - 5000);
+      const searchTo = Math.min(tr.doc.content.size, to + 5000);
+
+      tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
         if (!node.isText) return;
         const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
         if (mark) {
@@ -487,35 +493,37 @@ export const TiptapEditor: React.FC = () => {
           modified = true;
         }
       });
+
+      // Defensive fallback if mark spanned beyond 5000 chars
+      if (!modified) {
+        tr.doc.descendants((node, pos) => {
+          if (!node.isText) return;
+          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
+          if (mark) {
+            tr.removeMark(pos, pos + node.nodeSize, mark.type);
+            const newMark = mark.type.create({ ...mark.attrs, color });
+            tr.addMark(pos, pos + node.nodeSize, newMark);
+            modified = true;
+          }
+        });
+      }
       
       if (modified) {
         editor.view.dispatch(tr);
       }
     } else {
       const newId = Math.random().toString(36).substring(2, 6);
-      editor.chain().focus().setCustomHighlight({ color, id: newId }).run();
+      editor.chain().setCustomHighlight({ color, id: newId }).run();
     }
     
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
     
     setPopoverOpen(false);
 
-    // Clear selection away from highlight so popover closes
-    let clearPos = -1;
-    editor.state.doc.descendants((node, pos) => {
-      if (clearPos !== -1) return false;
-      if (node.isText && !node.marks.some(m => m.type.name === 'customHighlight')) {
-        clearPos = pos;
-        return false;
-      }
-    });
-    if (clearPos >= 0) {
-      editor.commands.setTextSelection(clearPos);
-    } else {
-      editor.commands.setTextSelection(0);
-    }
+    // Clear selection away from highlight so popover closes cleanly without scanning doc
+    editor.commands.setTextSelection(editor.state.selection.to);
     window.getSelection()?.removeAllRanges();
-    updateHighlightCount(editor);
+    // Color change does not alter count; no recounting needed
   };
 
   const handleRemoveHighlight = () => {
@@ -527,8 +535,12 @@ export const TiptapEditor: React.FC = () => {
     if (existingId) {
       const { tr } = editor.state;
       let modified = false;
-      
-      tr.doc.descendants((node, pos) => {
+      const { from, to } = editor.state.selection;
+
+      const searchFrom = Math.max(0, from - 5000);
+      const searchTo = Math.min(tr.doc.content.size, to + 5000);
+
+      tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
         if (!node.isText) return;
         const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
         if (mark) {
@@ -536,34 +548,33 @@ export const TiptapEditor: React.FC = () => {
           modified = true;
         }
       });
+
+      if (!modified) {
+        tr.doc.descendants((node, pos) => {
+          if (!node.isText) return;
+          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
+          if (mark) {
+            tr.removeMark(pos, pos + node.nodeSize, mark.type);
+            modified = true;
+          }
+        });
+      }
       
       if (modified) {
         editor.view.dispatch(tr);
       }
     } else {
-      editor.chain().focus().unsetCustomHighlight().run();
+      editor.chain().unsetCustomHighlight().run();
     }
     
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
     
     setPopoverOpen(false);
 
-    // Clear selection away from highlight so popover closes
-    let clearPos = -1;
-    editor.state.doc.descendants((node, pos) => {
-      if (clearPos !== -1) return false;
-      if (node.isText && !node.marks.some(m => m.type.name === 'customHighlight')) {
-        clearPos = pos;
-        return false;
-      }
-    });
-    if (clearPos >= 0) {
-      editor.commands.setTextSelection(clearPos);
-    } else {
-      editor.commands.setTextSelection(0);
-    }
+    // Clear selection away from highlight cleanly without scanning doc
+    editor.commands.setTextSelection(editor.state.selection.to);
     window.getSelection()?.removeAllRanges();
-    updateHighlightCount(editor);
+    scheduleDebouncedHighlightCount(editor);
   };
 
   const getContainerWidthClass = () => {
