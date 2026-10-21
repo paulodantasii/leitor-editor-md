@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useReducer } from 'react';
 import { createPortal } from 'react-dom';
 import { Editor } from '@tiptap/react';
 import {
@@ -53,6 +53,34 @@ const COLOR_BAR_MAP: Record<HighlightColor, string> = {
 };
 
 export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor }) => {
+  // Re-render a toolbar quando a seleção/conteúdo do editor muda.
+  // Necessário porque o componente é memoizado e a referência de `editor` nunca muda.
+  const [, forceToolbarUpdate] = useReducer((x: number) => x + 1, 0);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    let frameId: number | null = null;
+    const scheduleUpdate = () => {
+      if (frameId !== null) return; // coalesce: no máximo 1 render por frame
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        forceToolbarUpdate();
+      });
+    };
+
+    editor.on('transaction', scheduleUpdate);
+    editor.on('focus', scheduleUpdate);
+    editor.on('blur', scheduleUpdate);
+
+    return () => {
+      editor.off('transaction', scheduleUpdate);
+      editor.off('focus', scheduleUpdate);
+      editor.off('blur', scheduleUpdate);
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    };
+  }, [editor]);
+
   const [isHighlightMenuOpen, setIsHighlightMenuOpen] = useState(false);
   const [menuCoords, setMenuCoords] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -758,3 +786,5 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor 
     </div>
   );
 });
+
+EditorToolbar.displayName = 'EditorToolbar';
