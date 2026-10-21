@@ -13,6 +13,9 @@ describe('storage (coalesced saving)', () => {
     oneDriveItemId: null,
     lastSavedAt: '12:00:00',
     isDirty: false,
+    revision: 0,
+    draftRevision: 0,
+    sourceRevision: 0,
     docId: 'doc-123',
   };
 

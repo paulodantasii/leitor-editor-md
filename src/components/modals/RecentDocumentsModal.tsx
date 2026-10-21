@@ -13,6 +13,7 @@ import {
   ArrowRight,
   RefreshCw,
   AlertCircle,
+  Folder,
 } from 'lucide-react';
 
 export const RecentDocumentsModal: React.FC = () => {
@@ -72,7 +73,7 @@ export const RecentDocumentsModal: React.FC = () => {
   };
 
   const handleItemClick = (item: RecentDocumentItem) => {
-    if (currentDoc.isDirty) {
+    if (currentDoc?.isDirty) {
       setPendingItemToOpen(item);
       setIsUnsavedGuardOpen(true);
     } else {
@@ -195,7 +196,11 @@ export const RecentDocumentsModal: React.FC = () => {
             </div>
           ) : (
             filteredDocs.map((item) => {
-              const isCurrent = currentDoc.title === item.title;
+              const isCurrent = currentDoc ? (
+                Boolean(currentDoc.oneDriveItemId && currentDoc.oneDriveItemId === item.oneDriveItemId) ||
+                Boolean(currentDoc.docId && (item.id === `draft:${currentDoc.docId}` || item.id === `file:${currentDoc.docId}` || item.id === `local_${currentDoc.docId}`)) ||
+                Boolean(!currentDoc.oneDriveItemId && currentDoc.title === item.title)
+              ) : false;
 
               return (
                 <div
@@ -212,10 +217,18 @@ export const RecentDocumentsModal: React.FC = () => {
                       className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
                         item.isOneDrive
                           ? 'bg-sky-100 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400'
-                          : 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300'
+                          : item.sourceType === 'local_file'
+                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
                       }`}
                     >
-                      {item.isOneDrive ? <Cloud className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                      {item.isOneDrive ? (
+                        <Cloud className="w-4 h-4" />
+                      ) : item.sourceType === 'local_file' ? (
+                        <Folder className="w-4 h-4" />
+                      ) : (
+                        <FileText className="w-4 h-4" />
+                      )}
                     </div>
 
                     <div className="min-w-0">
@@ -223,13 +236,21 @@ export const RecentDocumentsModal: React.FC = () => {
                         <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate max-w-[320px]">
                           {item.title}
                         </span>
-                        {item.isOneDrive && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 shrink-0">
+                        {item.isOneDrive ? (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 shrink-0">
                             OneDrive
+                          </span>
+                        ) : item.sourceType === 'local_file' ? (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 shrink-0">
+                            Arquivo Local
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0">
+                            Rascunho
                           </span>
                         )}
                         {isCurrent && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 shrink-0">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 shrink-0">
                             Aberto Agora
                           </span>
                         )}
@@ -238,10 +259,14 @@ export const RecentDocumentsModal: React.FC = () => {
                       <div className="flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
-                          {formatTimestamp(item.lastOpenedAt)}
+                          Aberto {formatTimestamp(item.lastOpenedAt)}
                         </span>
-                        <span>•</span>
-                        <span>{item.content ? `${Math.round(item.content.length / 1024)} KB` : 'Vazio'}</span>
+                        {item.lastSavedAt && (
+                          <>
+                            <span>•</span>
+                            <span>Salvo às {item.lastSavedAt}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -289,7 +314,7 @@ export const RecentDocumentsModal: React.FC = () => {
         }}
         onConfirmDiscard={handleConfirmDiscardFromGuard}
         onConfirmSaveAndProceed={handleConfirmSaveFromGuard}
-        documentTitle={currentDoc.title}
+        documentTitle={currentDoc?.title || ''}
         actionType="open_recent"
       />
     </div>

@@ -46,7 +46,9 @@ export const CloudConflictModal: React.FC = () => {
     // Download current unsaved local changes to device
     flushPendingEditorContent();
     const freshDoc = useAppStore.getState().document;
-    downloadMarkdownFile(freshDoc.content, `backup_local_${freshDoc.title}`);
+    if (freshDoc) {
+      downloadMarkdownFile(freshDoc.content, `backup_local_${freshDoc.title}`);
+    }
     handleAcceptCloud();
   };
 
@@ -64,7 +66,7 @@ export const CloudConflictModal: React.FC = () => {
                 Conflito de Versões Detectado
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[260px]">
-                {currentDoc.title}
+                {currentDoc?.title || 'Documento'}
               </p>
             </div>
           </div>

@@ -109,6 +109,22 @@ export function flushPendingLocalDocumentSave(): void {
 }
 
 /**
+ * Limpa o documento ativo do LocalStorage e cancela qualquer gravação pendente no debounce.
+ */
+export function clearLocalDocument(): void {
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+  }
+  pendingSaveDoc = null;
+  try {
+    localStorage.removeItem(DOC_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Loads last active document from LocalStorage fallback.
  */
 export function loadLocalDocument(): DocumentState | null {

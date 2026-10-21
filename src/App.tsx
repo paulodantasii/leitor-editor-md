@@ -12,13 +12,18 @@ import { useAppStore } from './store/useAppStore';
 import { ReadingProgress } from './components/layout/ReadingProgress';
 import { useAutoSaveAndSync } from './hooks/useAutoSaveAndSync';
 import { getActiveAccount } from './services/msalService';
+import { saveActiveDocument } from './services/documentSaveService';
+
+import { HomeScreen } from './components/home/HomeScreen';
 
 export const App: React.FC = () => {
   const theme = useAppStore((state) => state.preferences.theme);
-  const docTitle = useAppStore((state) => state.document.title);
+  const docTitle = useAppStore((state) => state.document?.title);
+  const hasDocument = useAppStore((state) => Boolean(state.document));
   const loadCachedDocument = useAppStore((state) => state.loadCachedDocument);
   const toggleHighlightMode = useAppStore((state) => state.toggleHighlightMode);
   const setUserProfile = useAppStore((state) => state.setUserProfile);
+  const setSyncNotification = useAppStore((state) => state.setSyncNotification);
 
   // Restore MSAL session on boot so background cloud sync is immediately active
   useEffect(() => {
@@ -54,6 +59,31 @@ export const App: React.FC = () => {
   // Global Keyboard Shortcuts (Press 'G' to toggle Highlight mode)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+S / Cmd+S: salva o documento (bloqueia o "Salvar página" do navegador)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (!hasDocument) return;
+
+        const state = useAppStore.getState();
+        const doc = state.document;
+        if (!doc) return;
+
+        const hasSource = Boolean(doc.oneDriveItemId || state.fileHandle || doc.fileHandle);
+        if (!hasSource) {
+          state.setIsSaveDestinationModalOpen(true);
+          return;
+        }
+
+        saveActiveDocument().then((result) => {
+          if (result.status === 'saved') {
+            setSyncNotification(result.message || 'Salvo!');
+          } else if (result.status === 'error') {
+            setSyncNotification(`Erro ao salvar: ${result.message || 'tente novamente.'}`);
+          }
+        });
+        return;
+      }
+
       // Ignore if combined with modifier keys (Ctrl, Alt, Meta)
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
@@ -79,7 +109,7 @@ export const App: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [toggleHighlightMode]);
+  }, [toggleHighlightMode, setSyncNotification]);
 
   // Register PWA Service Worker
   useEffect(() => {
@@ -122,12 +152,12 @@ export const App: React.FC = () => {
     >
       <Header />
 
-      <main className="flex-1 flex flex-col items-center relative">
-        <TiptapEditor />
+      <main className="flex-1 flex flex-col items-center relative w-full">
+        {hasDocument ? <TiptapEditor /> : <HomeScreen />}
       </main>
 
-      {/* Startup Choice Modal (shown when browser opens from scratch) */}
-      {showWelcome && (
+      {/* Startup Choice Modal (shown when browser opens from scratch with a document open) */}
+      {showWelcome && hasDocument && (
         <WelcomeScreen
           onContinueLast={handleContinueLast}
           onOpenNew={handleOpenNew}

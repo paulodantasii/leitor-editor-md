@@ -74,19 +74,31 @@ export async function getOneDriveItemMetadata(fileId: string): Promise<OneDriveI
 
 /**
  * Overwrites an existing file in OneDrive with new Markdown content and returns updated metadata.
+ * Optionally uses eTag with `If-Match` to detect real remote cloud conflicts (HTTP 412).
  */
-export async function saveOneDriveFile(fileId: string, content: string): Promise<OneDriveItem> {
+export async function saveOneDriveFile(fileId: string, content: string, eTag?: string | null): Promise<OneDriveItem> {
   const token = await getAccessToken();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'text/markdown; charset=utf-8',
+  };
+
+  if (eTag) {
+    headers['If-Match'] = eTag;
+  }
+
   const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${fileId}/content`, {
     method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'text/markdown; charset=utf-8',
-    },
+    headers,
     body: content,
   });
 
   if (!response.ok) {
+    if (response.status === 412) {
+      const err = new Error('412 Precondition Failed - O arquivo foi modificado na nuvem em outro dispositivo.');
+      (err as any).status = 412;
+      throw err;
+    }
     throw new Error(`Failed to save file to OneDrive: ${response.statusText}`);
   }
 
@@ -100,3 +112,95 @@ export async function saveOneDriveFile(fileId: string, content: string): Promise
     };
   }
 }
+
+/**
+ * Normaliza o nome do arquivo garantindo a extensão .md ou preservando .markdown / .txt.
+ */
+export function normalizeMarkdownFileName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return 'Sem Título.md';
+  if (/\.(md|markdown|txt)$/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed}.md`;
+}
+
+/**
+ * Calcula o próximo nome disponível em uma lista de nomes existentes,
+ * adicionando ou incrementando sufixo numérico com parênteses: nome (1).md, nome (2).md...
+ * Respeita a Seção 3.4 do plano (evita "nome 1.md" nativo do Graph).
+ */
+export function computeNextAvailableFileName(desiredName: string, existingNames: string[] = []): string {
+  const normalized = normalizeMarkdownFileName(desiredName);
+  const existingSet = new Set(existingNames.map((n) => n.toLowerCase().trim()));
+
+  if (!existingSet.has(normalized.toLowerCase())) {
+    return normalized;
+  }
+
+  // Decompõe em base, número existente e extensão
+  const match = normalized.match(/^(.*?)(?: \((\d+)\))?(\.[^.]*)?$/);
+  const base = match && match[1] ? match[1] : normalized;
+  const currentNum = match && match[2] ? parseInt(match[2], 10) : 0;
+  const ext = match && match[3] ? match[3] : '.md';
+
+  let n = currentNum > 0 ? currentNum + 1 : 1;
+  while (existingSet.has(`${base} (${n})${ext}`.toLowerCase())) {
+    n++;
+  }
+  return `${base} (${n})${ext}`;
+}
+
+/**
+ * Cria um novo arquivo no OneDrive via Microsoft Graph API.
+ * Suporta resolução automática de colisão com sufixo (1), (2)...
+ * Envia @microsoft.graph.conflictBehavior=fail para evitar geração nativa de "nome 1.md".
+ * Se houver 409 (outro cliente gravou ao mesmo tempo), tenta o próximo número candidato automaticamente.
+ */
+export async function createOneDriveFile(
+  folderId: string | undefined,
+  desiredFileName: string,
+  content: string,
+  existingFolderNames: string[] = []
+): Promise<OneDriveItem> {
+  const token = await getAccessToken();
+
+  let candidateName = computeNextAvailableFileName(desiredFileName, existingFolderNames);
+  const match = candidateName.match(/^(.*?)(?: \((\d+)\))?(\.[^.]*)?$/);
+  const base = match && match[1] ? match[1] : candidateName;
+  let currentNum = match && match[2] ? parseInt(match[2], 10) : 0;
+  const ext = match && match[3] ? match[3] : '.md';
+
+  const maxRetries = 15;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const encodedName = encodeURIComponent(candidateName);
+    const endpoint = folderId && folderId !== 'root'
+      ? `${GRAPH_BASE_URL}/me/drive/items/${folderId}:/${encodedName}:/content?@microsoft.graph.conflictBehavior=fail`
+      : `${GRAPH_BASE_URL}/me/drive/root:/${encodedName}:/content?@microsoft.graph.conflictBehavior=fail`;
+
+    const response = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'text/markdown; charset=utf-8',
+      },
+      body: content,
+    });
+
+    if (response.ok) {
+      return await response.json();
+    }
+
+    if (response.status === 409) {
+      // Conflito de concorrência com outro dispositivo criando simultaneamente
+      currentNum = currentNum > 0 ? currentNum + 1 : 1;
+      candidateName = `${base} (${currentNum})${ext}`;
+      continue;
+    }
+
+    throw new Error(`Falha ao criar arquivo no OneDrive: ${response.statusText}`);
+  }
+
+  throw new Error('Não foi possível gerar um nome de arquivo exclusivo no OneDrive.');
+}
+

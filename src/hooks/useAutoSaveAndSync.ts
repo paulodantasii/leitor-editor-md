@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { saveOneDriveFile, getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDriveService';
+import { getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDriveService';
 import { saveRecentDocument } from '../services/recentDocumentsService';
-import { flushPendingEditorContent } from '../services/editorContentBridge';
+import { saveCoordinator } from '../services/saveCoordinator';
 
-const AUTOSAVE_DEBOUNCE_DELAY_MS = 7500; // 7.5 segundos de pausa após digitação
+const AUTOSAVE_IDLE_DELAY_MS = 3000; // 3 segundos de pausa após digitação
+const AUTOSAVE_MAX_WAIT_MS = 30000; // 30 segundos de max-wait durante digitação contínua
 const CLOUD_POLL_INTERVAL_MS = 10000; // Polling ativo a cada 10 segundos enquanto aberto na tela
+const RETRY_BACKOFF_DELAYS = [5000, 15000, 60000]; // 5s -> 15s -> 60s
 
 export function useAutoSaveAndSync() {
   const {
@@ -14,22 +16,26 @@ export function useAutoSaveAndSync() {
     setSyncStatus,
     setSyncNotification,
     setCloudConflict,
+    fileHandle,
   } = useAppStore();
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isSavingRef = useRef(false);
+  const maxWaitTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const retryAttemptRef = useRef<number>(0);
   const isCheckingCloudRef = useRef(false);
   const currentDocRef = useRef(currentDoc);
+  const isDirtySinceRef = useRef<number | null>(null);
 
-  // Keep ref synchronized to avoid stale closures in intervals
+  // Mantém refs sincronizadas para evitar closures antigas
   useEffect(() => {
     currentDocRef.current = currentDoc;
   }, [currentDoc]);
 
-  // 1. Protection against accidental page close or reload when dirty
+  // 1. Proteção contra fechamento acidental da página quando houver edições não salvas
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (currentDoc.isDirty) {
+      if (currentDoc?.isDirty) {
         e.preventDefault();
         e.returnValue = '';
         return '';
@@ -40,69 +46,146 @@ export function useAutoSaveAndSync() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [currentDoc.isDirty]);
+  }, [currentDoc?.isDirty]);
 
-  // 2. Intelligent AutoSave for OneDrive with debounce
+  // 2. Política Inteligente de Autosave (OneDrive e Arquivo Local com Handle)
   useEffect(() => {
-    if (!currentDoc.oneDriveItemId || !currentDoc.isDirty || !navigator.onLine) {
+    if (!currentDoc) {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
+      if (maxWaitTimerRef.current) {
+        clearTimeout(maxWaitTimerRef.current);
+        maxWaitTimerRef.current = null;
+      }
+      isDirtySinceRef.current = null;
       return;
     }
 
+    const hasWritableSource = Boolean(currentDoc.oneDriveItemId || fileHandle || currentDoc.fileHandle);
+
+    // Se não tiver alterações ou não tiver fonte gravável, limpa timers
+    if (!currentDoc.isDirty || !hasWritableSource) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (maxWaitTimerRef.current) {
+        clearTimeout(maxWaitTimerRef.current);
+        maxWaitTimerRef.current = null;
+      }
+      isDirtySinceRef.current = null;
+      return;
+    }
+
+    if (!isDirtySinceRef.current) {
+      isDirtySinceRef.current = Date.now();
+    }
+
+    const triggerSave = async () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (maxWaitTimerRef.current) {
+        clearTimeout(maxWaitTimerRef.current);
+        maxWaitTimerRef.current = null;
+      }
+      isDirtySinceRef.current = null;
+
+      const result = await saveCoordinator.save({ interactive: false });
+      if (result.status === 'ok') {
+        retryAttemptRef.current = 0;
+      } else if (result.status === 'error' || result.status === 'offline') {
+        // Agendar retentativa com backoff
+        const attempt = retryAttemptRef.current;
+        const delay = RETRY_BACKOFF_DELAYS[Math.min(attempt, RETRY_BACKOFF_DELAYS.length - 1)];
+        retryAttemptRef.current = attempt + 1;
+
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => {
+          if (currentDocRef.current?.isDirty) {
+            triggerSave();
+          }
+        }, delay);
+      }
+    };
+
+    // A. Idle Debounce de 3s
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
+    debounceTimerRef.current = setTimeout(() => {
+      triggerSave();
+    }, AUTOSAVE_IDLE_DELAY_MS);
 
-    debounceTimerRef.current = setTimeout(async () => {
-      if (isSavingRef.current) return;
-      isSavingRef.current = true;
-
-      try {
-        setSyncStatus('saving');
-        flushPendingEditorContent();
-        const freshContent = useAppStore.getState().document.content;
-        const updatedItem = await saveOneDriveFile(currentDoc.oneDriveItemId!, freshContent);
-
-        const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-        setDocument({
-          isDirty: false,
-          lastSavedAt: nowFormatted,
-          cloudLastModified: updatedItem.lastModifiedDateTime,
-        });
-
-        // Also update local cache with the newest state
-        await saveRecentDocument({
-          ...currentDoc,
-          isDirty: false,
-          lastSavedAt: nowFormatted,
-          cloudLastModified: updatedItem.lastModifiedDateTime,
-        });
-
-        setSyncStatus('saved');
-      } catch (err) {
-        console.warn('Falha no salvamento automático para o OneDrive (tentará novamente mais tarde):', err);
-        setSyncStatus(navigator.onLine ? 'error' : 'offline-pending');
-      } finally {
-        isSavingRef.current = false;
-      }
-    }, AUTOSAVE_DEBOUNCE_DELAY_MS);
+    // B. Max-Wait de 30s (garante salvamento mesmo se o usuário digitar sem parar)
+    if (!maxWaitTimerRef.current) {
+      maxWaitTimerRef.current = setTimeout(() => {
+        triggerSave();
+      }, AUTOSAVE_MAX_WAIT_MS);
+    }
 
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [currentDoc.content, currentDoc.isDirty, currentDoc.oneDriveItemId, setDocument, setSyncStatus]);
+  }, [currentDoc?.content, currentDoc?.isDirty, currentDoc?.oneDriveItemId, fileHandle, currentDoc?.fileHandle]);
 
-  // 3. Active Background Polling & Window Focus / Visibility Freshness Check
+  // 3. Gatilhos Imediatos: Perda de Foco, Aba Oculta, Voltar Online
+  useEffect(() => {
+    const handleImmediateSaveIfDirty = () => {
+      const doc = currentDocRef.current;
+      if (!doc) return;
+      const state = useAppStore.getState();
+      const hasSource = Boolean(doc.oneDriveItemId || state.fileHandle || doc.fileHandle);
+
+      if (doc.isDirty && hasSource) {
+        saveCoordinator.save({ interactive: false });
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        handleImmediateSaveIfDirty();
+      }
+    };
+
+    const handlePageHide = () => {
+      handleImmediateSaveIfDirty();
+    };
+
+    const handleBlur = () => {
+      handleImmediateSaveIfDirty();
+    };
+
+    const handleOnline = () => {
+      // Reconectou: tenta enviar imediatamente qualquer alteração pendente
+      retryAttemptRef.current = 0;
+      handleImmediateSaveIfDirty();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('online', handleOnline);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
+
+  // 4. Polling Ativo do OneDrive com eTag (Detecção Precisa de Conflitos)
   useEffect(() => {
     const checkCloudFreshness = async () => {
       const doc = currentDocRef.current;
-      if (!doc.oneDriveItemId || !navigator.onLine || isSavingRef.current) return;
+      if (!doc || !doc.oneDriveItemId || !navigator.onLine || saveCoordinator.isSaving()) return;
 
       if (isCheckingCloudRef.current) return;
       isCheckingCloudRef.current = true;
@@ -110,22 +193,27 @@ export function useAutoSaveAndSync() {
       try {
         const metadata = await getOneDriveItemMetadata(doc.oneDriveItemId);
         const cloudModified = metadata.lastModifiedDateTime;
+        const cloudETag = metadata.eTag;
 
         if (!cloudModified) return;
 
-        // Ancoragem inicial: se ainda não tiver o timestamp da nuvem, ancora agora!
-        if (!doc.cloudLastModified) {
-          setDocument({ cloudLastModified: cloudModified });
+        // Ancoragem inicial se ainda não tiver eTag ou timestamp
+        if (!doc.cloudETag && !doc.cloudLastModified) {
+          setDocument({
+            cloudLastModified: cloudModified,
+            cloudETag: cloudETag || null,
+          });
           return;
         }
 
-        const cloudTime = new Date(cloudModified).getTime();
-        const localCloudTime = new Date(doc.cloudLastModified).getTime();
+        // Compara por eTag (exato); se não houver eTag, compara horário com margem de 1s
+        const isDifferent = doc.cloudETag
+          ? cloudETag && cloudETag !== doc.cloudETag
+          : new Date(cloudModified).getTime() > new Date(doc.cloudLastModified || 0).getTime() + 1000;
 
-        // Se a nuvem tem uma versão com data mais recente (diferença mínima de 1s para evitar jitter de relógio)
-        if (cloudTime > localCloudTime + 1000) {
+        if (isDifferent) {
           if (!doc.isDirty) {
-            // Sincronização automática suave: baixa e atualiza na tela
+            // Sincronização suave e automática: baixa e atualiza na tela
             setSyncStatus('saving');
             const freshContent = await downloadOneDriveFile(doc.oneDriveItemId);
 
@@ -134,22 +222,26 @@ export function useAutoSaveAndSync() {
             setDocument({
               content: freshContent,
               cloudLastModified: cloudModified,
+              cloudETag: cloudETag || null,
               lastSavedAt: nowFormatted,
               isDirty: false,
+              sourceRevision: doc.revision,
             });
 
             await saveRecentDocument({
               ...doc,
               content: freshContent,
               cloudLastModified: cloudModified,
+              cloudETag: cloudETag || null,
               lastSavedAt: nowFormatted,
               isDirty: false,
+              sourceRevision: doc.revision,
             });
 
             setSyncStatus('saved');
             setSyncNotification(`Documento atualizado com a versão mais recente da nuvem (${nowFormatted})`);
           } else {
-            // Conflito: usuário tem edições locais não salvas E a nuvem mudou
+            // Conflito real: usuário tem edições locais não salvas E a nuvem mudou
             const freshContent = await downloadOneDriveFile(doc.oneDriveItemId);
             setCloudConflict({
               cloudModified,
@@ -164,19 +256,19 @@ export function useAutoSaveAndSync() {
       }
     };
 
-    // A: Executa a primeira checagem após 2 segundos de montar o documento
+    // A: Primeira checagem 2s após montar
     const initialTimer = setTimeout(() => {
       checkCloudFreshness();
     }, 2000);
 
-    // B: Polling ativo periódico a cada 10 segundos enquanto o documento estiver aberto
+    // B: Polling ativo periódico a cada 10s enquanto visível
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         checkCloudFreshness();
       }
     }, CLOUD_POLL_INTERVAL_MS);
 
-    // C: Checagem imediata ao alternar para a aba ou desbloquear dispositivo
+    // C: Checagem imediata ao focar na janela / desbloquear tela
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
         checkCloudFreshness();
@@ -192,5 +284,5 @@ export function useAutoSaveAndSync() {
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
     };
-  }, [currentDoc.oneDriveItemId, setDocument, setSyncStatus, setSyncNotification, setCloudConflict]);
+  }, [currentDoc?.oneDriveItemId, setDocument, setSyncStatus, setSyncNotification, setCloudConflict]);
 }

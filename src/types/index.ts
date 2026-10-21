@@ -20,14 +20,28 @@ export interface UserPreferences {
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'offline-pending' | 'error';
 
+export type SaveResultStatus = 'ok' | 'conflict' | 'offline' | 'auth' | 'error' | 'cancelled';
+
+export interface SaveResult {
+  status: SaveResultStatus;
+  message?: string;
+  sourceRevision?: number;
+}
+
 export interface DocumentState {
   title: string;
   content: string;
   oneDriveItemId: string | null;
   lastSavedAt: string | null;
   isDirty: boolean;
+  revision: number;
+  draftRevision: number;
+  sourceRevision: number;
   docId?: string;
   cloudLastModified?: string | null;
+  cloudETag?: string | null;
+  localLastModified?: number | null;
+  fileHandle?: any;
 }
 
 export interface OneDriveItem {
@@ -47,13 +61,23 @@ export interface UserProfile {
   avatarUrl?: string;
 }
 
+export type DocumentSourceType = 'onedrive' | 'local_file' | 'draft';
+
 export interface RecentDocumentItem {
   id: string;
   title: string;
   content: string;
+  sourceType?: DocumentSourceType;
   oneDriveItemId: string | null;
   lastSavedAt: string | null;
   lastOpenedAt: number;
+  lastModifiedAt?: number;
   isOneDrive: boolean;
   cloudLastModified?: string | null;
+  cloudETag?: string | null;
+  localLastModified?: number | null;
+  fileHandle?: any;
+  revision?: number;
+  draftRevision?: number;
+  sourceRevision?: number;
 }

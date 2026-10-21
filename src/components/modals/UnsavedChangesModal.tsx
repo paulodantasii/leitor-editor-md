@@ -1,7 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Save, X, Trash2 } from 'lucide-react';
 
-export type GuardActionType = 'new' | 'open_local' | 'open_onedrive' | 'open_recent';
+export type GuardActionType = 'new' | 'open_local' | 'open_onedrive' | 'open_recent' | 'close';
 
 interface UnsavedChangesModalProps {
   isOpen: boolean;
@@ -28,6 +28,15 @@ export const UnsavedChangesModal: React.FC<UnsavedChangesModalProps> = ({
 
   const getActionLabels = () => {
     switch (actionType) {
+      case 'close':
+        return {
+          title: customActionTitle || 'Fechar Documento',
+          description:
+            customDescription ||
+            'O documento possui alterações que ainda não foram salvas. O que você gostaria de fazer antes de fechar?',
+          saveButton: 'Salvar e Fechar',
+          discardButton: 'Fechar sem Salvar',
+        };
       case 'open_local':
         return {
           title: customActionTitle || 'Abrir Arquivo Local',

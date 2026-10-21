@@ -12,13 +12,16 @@ import {
   saveUserPreferences,
   loadLocalDocument,
   saveLocalDocument,
+  clearLocalDocument,
 } from '../services/storage';
 import {
   getRecentDocuments,
   saveRecentDocument,
   deleteRecentDocument as deleteRecentFromDb,
   loadRecentDocumentWithCloudSync,
+  cleanupBlankRecentDocuments,
 } from '../services/recentDocumentsService';
+import { isBlankUntitledDocument } from '../services/documentUtils';
 import { SAMPLE_LEGISLATION_DOC } from '../components/sampleDocs';
 
 interface AppState {
@@ -36,12 +39,13 @@ interface AppState {
   setIsEditable: (editable: boolean) => void;
 
   // Document State
-  document: DocumentState;
+  document: DocumentState | null;
   setDocument: (doc: Partial<DocumentState>) => void;
   updateDocumentContent: (content: string) => void;
   markDocumentDirty: () => void;
   loadCachedDocument: () => void;
   createNewDocument: () => void;
+  closeDocument: () => void;
 
   // Recent Documents (up to 30 files in cache)
   recentDocuments: RecentDocumentItem[];
@@ -69,7 +73,12 @@ interface AppState {
 
   // Modals
   isOneDriveModalOpen: boolean;
-  setIsOneDriveModalOpen: (open: boolean) => void;
+  oneDriveModalMode: 'open' | 'save_as';
+  oneDriveSuccessAction: 'close' | null;
+  setIsOneDriveModalOpen: (open: boolean, mode?: 'open' | 'save_as', successAction?: 'close' | null) => void;
+  setOneDriveSuccessAction: (action: 'close' | null) => void;
+  isSaveDestinationModalOpen: boolean;
+  setIsSaveDestinationModalOpen: (open: boolean) => void;
   isSettingsModalOpen: boolean;
   setIsSettingsModalOpen: (open: boolean) => void;
   isRecentModalOpen: boolean;
@@ -78,22 +87,33 @@ interface AppState {
 
 const initialPreferences = loadUserPreferences();
 
-const getInitialDoc = (): DocumentState => {
+const getInitialDoc = (): DocumentState | null => {
   const cached = loadLocalDocument();
-  if (cached && (cached.content !== undefined || cached.title)) {
-    return { ...cached, docId: cached.docId || 'doc-initial' };
+  // Ignora (e descarta) "Sem Título.md" em branco herdado de versões antigas
+  if (cached && isBlankUntitledDocument(cached)) {
+    try {
+      localStorage.removeItem('leitor_md_document');
+    } catch {
+      // ignore
+    }
+    return null;
+  } else if (cached && (cached.content !== undefined || cached.title)) {
+    const rev = cached.revision ?? (cached.isDirty ? 1 : 0);
+    const srcRev = cached.sourceRevision ?? (cached.isDirty ? 0 : rev);
+    const draftRev = cached.draftRevision ?? rev;
+    return {
+      ...cached,
+      revision: rev,
+      sourceRevision: srcRev,
+      draftRevision: draftRev,
+      isDirty: rev > srcRev,
+      docId: cached.docId || 'doc-initial',
+    };
   }
-  return {
-    title: 'Constituição Federal - Amostra Vade Mecum.md',
-    content: SAMPLE_LEGISLATION_DOC,
-    oneDriveItemId: null,
-    lastSavedAt: null,
-    isDirty: false,
-    docId: 'doc-sample',
-  };
+  return null;
 };
 
-const initialDoc: DocumentState = getInitialDoc();
+const initialDoc: DocumentState | null = getInitialDoc();
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Preferences
@@ -134,10 +154,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   document: initialDoc,
   setDocument: (docPartial) => {
     set((state) => {
-      const isNewContent = docPartial.content !== undefined && docPartial.content !== state.document.content;
-      const updated = {
-        ...state.document,
+      const currentDoc = state.document || {
+        title: 'Sem Título.md',
+        content: '',
+        oneDriveItemId: null,
+        lastSavedAt: null,
+        isDirty: false,
+        revision: 0,
+        draftRevision: 0,
+        sourceRevision: 0,
+        docId: `doc-${Date.now()}`,
+      };
+      const isNewContent = docPartial.content !== undefined && docPartial.content !== currentDoc.content;
+      const isNewTitle = docPartial.title !== undefined && docPartial.title !== currentDoc.title;
+
+      let revision = docPartial.revision !== undefined
+        ? docPartial.revision
+        : (isNewContent || isNewTitle ? (currentDoc.revision ?? 0) + 1 : (currentDoc.revision ?? 0));
+
+      let sourceRevision = docPartial.sourceRevision !== undefined
+        ? docPartial.sourceRevision
+        : (currentDoc.sourceRevision ?? 0);
+
+      let draftRevision = docPartial.draftRevision !== undefined
+        ? docPartial.draftRevision
+        : (currentDoc.draftRevision ?? 0);
+
+      if (docPartial.isDirty === false && docPartial.sourceRevision === undefined) {
+        sourceRevision = revision;
+      }
+
+      const isDirty = docPartial.isDirty !== undefined
+        ? docPartial.isDirty
+        : revision > sourceRevision;
+
+      const updated: DocumentState = {
+        ...currentDoc,
         ...docPartial,
+        revision,
+        sourceRevision,
+        draftRevision,
+        isDirty,
         ...(isNewContent && !docPartial.docId
           ? { docId: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}` }
           : {}),
@@ -148,42 +205,100 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   updateDocumentContent: (content) => {
     set((state) => {
-      const updated = { ...state.document, content, isDirty: true };
+      if (!state.document) return state;
+      const newRevision = (state.document.revision ?? 0) + 1;
+      const sourceRev = state.document.sourceRevision ?? 0;
+      const updated: DocumentState = {
+        ...state.document,
+        content,
+        revision: newRevision,
+        isDirty: newRevision > sourceRev,
+      };
       saveLocalDocument(updated);
       return { document: updated };
     });
   },
   markDocumentDirty: () => {
     set((state) => {
-      if (state.document.isDirty) return state;
-      return { document: { ...state.document, isDirty: true } };
+      if (!state.document) return state;
+      const newRevision = (state.document.revision ?? 0) + 1;
+      return {
+        document: {
+          ...state.document,
+          revision: newRevision,
+          isDirty: true,
+        },
+      };
     });
   },
-  loadCachedDocument: () => {
-    const cached = loadLocalDocument() || {
-      title: 'Constituição Federal - Amostra Vade Mecum.md',
-      content: SAMPLE_LEGISLATION_DOC,
-      oneDriveItemId: null,
-      lastSavedAt: null,
-      isDirty: false,
-      docId: 'doc-sample',
-    };
-    if ((cached as any).storedInDb && !cached.content) {
-      getRecentDocuments().then((recents) => {
-        if (recents.length > 0 && recents[0].content) {
-          set({ document: { ...recents[0], isDirty: false, docId: recents[0].id || `doc-${Date.now()}` } });
-        }
+  closeDocument: () => {
+    clearLocalDocument();
+    set({
+      document: null,
+      fileHandle: null,
+      isEditable: false,
+      isHighlightMode: false,
+      highlightCount: 0,
+      syncStatus: 'idle',
+      syncNotification: null,
+      cloudConflict: null,
+    });
+  },
+  loadCachedDocument: async () => {
+    const loaded = loadLocalDocument();
+    if (loaded && !isBlankUntitledDocument(loaded)) {
+      const rev = loaded.revision ?? 0;
+      const srcRev = loaded.sourceRevision ?? rev;
+      set({
+        document: {
+          ...loaded,
+          revision: rev,
+          sourceRevision: srcRev,
+          draftRevision: loaded.draftRevision ?? rev,
+          docId: loaded.docId || `doc-${Date.now()}`,
+        },
+        fileHandle: loaded.fileHandle || null,
       });
+      return;
     }
-    set({ document: { ...cached, docId: cached.docId || `doc-${Date.now()}` } });
+
+    try {
+      const recents = await getRecentDocuments();
+      if (recents.length > 0) {
+        await get().openRecentDocument(recents[0]);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    set({
+      document: {
+        title: 'Constituição Federal - Amostra Vade Mecum.md',
+        content: SAMPLE_LEGISLATION_DOC,
+        oneDriveItemId: null,
+        lastSavedAt: null,
+        isDirty: false,
+        revision: 0,
+        draftRevision: 0,
+        sourceRevision: 0,
+        docId: 'doc-sample',
+      },
+      fileHandle: null,
+    });
   },
   createNewDocument: () => {
+    // Documento efêmero: NÃO é gravado no localStorage nem no histórico enquanto estiver vazio.
+    // Passa a ser persistido automaticamente na primeira edição com conteúdo significativo ou ao ser renomeado/salvo.
     const newDoc: DocumentState = {
       title: 'Sem Título.md',
       content: '',
       oneDriveItemId: null,
-      lastSavedAt: new Date().toLocaleTimeString(),
+      lastSavedAt: null,
       isDirty: false,
+      revision: 0,
+      draftRevision: 0,
+      sourceRevision: 0,
       docId: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     };
     set({
@@ -193,13 +308,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       isEditable: true, // Já abre em modo de edição para digitar direto
       isHighlightMode: false,
     });
-    saveLocalDocument(newDoc);
   },
 
   // Recent Documents (up to 30 files in cache)
   recentDocuments: [],
   loadRecentDocuments: async () => {
     try {
+      await cleanupBlankRecentDocuments();
       const list = await getRecentDocuments();
       set({ recentDocuments: list });
     } catch (err) {
@@ -213,7 +328,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set({
         document: doc,
-        fileHandle: null,
+        fileHandle: doc.fileHandle || null,
         syncStatus: updatedFromCloud ? 'saved' : 'idle',
         highlightCount: 0,
       });
@@ -258,7 +373,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Modals
   isOneDriveModalOpen: false,
-  setIsOneDriveModalOpen: (open) => set({ isOneDriveModalOpen: open }),
+  oneDriveModalMode: 'open',
+  oneDriveSuccessAction: null,
+  setIsOneDriveModalOpen: (open, mode = 'open', successAction = null) =>
+    set((state) => ({
+      isOneDriveModalOpen: open,
+      oneDriveModalMode: open ? mode : state.oneDriveModalMode,
+      oneDriveSuccessAction: open ? successAction : null,
+    })),
+  setOneDriveSuccessAction: (action) => set({ oneDriveSuccessAction: action }),
+  isSaveDestinationModalOpen: false,
+  setIsSaveDestinationModalOpen: (open) => set({ isSaveDestinationModalOpen: open }),
   isSettingsModalOpen: false,
   setIsSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
   isRecentModalOpen: false,

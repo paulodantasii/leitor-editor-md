@@ -30,7 +30,7 @@ import {
 
 export const TiptapEditor: React.FC = () => {
   // Fine-grained selectors: avoids re-rendering TiptapEditor on every content change / sync update
-  const docId = useAppStore((state) => state.document.docId);
+  const docId = useAppStore((state) => state.document?.docId);
   const isHighlightMode = useAppStore((state) => state.isHighlightMode);
   const isEditable = useAppStore((state) => state.isEditable);
   const preferences = useAppStore(
@@ -51,6 +51,7 @@ export const TiptapEditor: React.FC = () => {
   const currentLoadedDocIdRef = useRef<string | null | undefined>(null);
   const markdownDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTypingStartTimeRef = useRef<number | null>(null);
 
   // State to control popover visibility: only opens on explicit click on a highlight mark
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -190,7 +191,7 @@ export const TiptapEditor: React.FC = () => {
       CustomHighlight,
       Markdown.configure({ html: true, transformPastedText: true, transformCopiedText: true, breaks: true }),
     ],
-    content: useAppStore.getState().document.content,
+    content: useAppStore.getState().document?.content || '',
     editable: isEditable,
     onUpdate: ({ editor: currentEditor, transaction }) => {
       if (!transaction.docChanged) return;
@@ -235,6 +236,7 @@ export const TiptapEditor: React.FC = () => {
 
   // Flushes pending in-memory editor changes immediately to store and local storage
   const flushContent = useCallback(() => {
+    lastTypingStartTimeRef.current = null;
     if (markdownDebounceTimerRef.current) {
       clearTimeout(markdownDebounceTimerRef.current);
       markdownDebounceTimerRef.current = null;
@@ -258,18 +260,32 @@ export const TiptapEditor: React.FC = () => {
     markDocumentDirty();
     markBridgeDirty();
 
+    if (!lastTypingStartTimeRef.current) {
+      lastTypingStartTimeRef.current = Date.now();
+    }
+
+    // Max-wait no editor: se digitação contínua por 4 s, força a serialização em background
+    if (Date.now() - lastTypingStartTimeRef.current >= 4000) {
+      flushContent();
+      return;
+    }
+
     if (markdownDebounceTimerRef.current) {
       clearTimeout(markdownDebounceTimerRef.current);
     }
-    // Non-blocking 7s debounce during active typing to avoid blocking the main UI thread
+
+    // Debounce adaptativo ao tamanho do documento (700ms para normais, até 1200ms para arquivos gigantes)
+    const docSize = (lastEmittedMarkdownRef.current || '').length;
+    const delay = docSize > 200000 ? 1200 : docSize > 80000 ? 950 : 700;
+
     markdownDebounceTimerRef.current = setTimeout(() => {
       flushContent();
-    }, 7000);
+    }, delay);
   }, [flushContent, markDocumentDirty]);
 
   scheduleDebouncedContentRef.current = scheduleDebouncedContent;
 
-  // Register bridge flush handler & window lifecycle guards (background/close)
+  // Register bridge flush handler & window lifecycle guards (background/close/blur)
   useEffect(() => {
     const unregister = registerEditorFlushHandler(() => {
       flushContent();
@@ -285,13 +301,19 @@ export const TiptapEditor: React.FC = () => {
       flushContent();
     };
 
+    const handleBlur = () => {
+      flushContent();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('blur', handleBlur);
 
     return () => {
       unregister();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('blur', handleBlur);
       if (markdownDebounceTimerRef.current) {
         clearTimeout(markdownDebounceTimerRef.current);
       }
@@ -312,7 +334,7 @@ export const TiptapEditor: React.FC = () => {
     currentLoadedDocIdRef.current = docId;
     const currentDoc = useAppStore.getState().document;
 
-    if (!currentDoc.content) {
+    if (!currentDoc || !currentDoc.content) {
       lastEmittedMarkdownRef.current = '';
       editor.commands.clearContent(false);
       updateHighlightCount(editor);

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 
 export const ReadingProgress: React.FC = () => {
-  const docContent = useAppStore((state) => state.document.content);
+  const docContent = useAppStore((state) => state.document?.content);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [wordCount, setWordCount] = useState(0);
 
