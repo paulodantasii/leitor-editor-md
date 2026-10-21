@@ -152,11 +152,12 @@ mark.gray {
 }
 
 /* Renderização de alta performance para documentos extensos:
-   Pula cálculo de layout/pintura de nós fora da tela enquanto preserva busca nativa (Ctrl+F) e seleção */
+   Pula cálculo de layout/pintura de nós fora da tela enquanto preserva busca nativa (Ctrl+F) e seleção.
+   Obs.: <ol> fica de fora de propósito. content-visibility aplica paint containment, que corta os
+   marcadores numéricos (outside) mais largos que o padding-left (ex.: "10." vira "0."). */
 .ProseMirror > p,
 .ProseMirror > blockquote,
 .ProseMirror > ul,
-.ProseMirror > ol,
 .ProseMirror > .tableWrapper,
 .ProseMirror > table,
 .ProseMirror > pre,
