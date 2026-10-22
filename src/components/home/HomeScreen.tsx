@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { RecentDocumentItem } from '../../types';
 import {
   Highlighter,
@@ -33,7 +34,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
     openRecentDocument,
     setIsRecentModalOpen,
     loadCachedDocument,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      document: state.document,
+      setDocument: state.setDocument,
+      setFileHandle: state.setFileHandle,
+      setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
+      createNewDocument: state.createNewDocument,
+      recentDocuments: state.recentDocuments,
+      loadRecentDocuments: state.loadRecentDocuments,
+      openRecentDocument: state.openRecentDocument,
+      setIsRecentModalOpen: state.setIsRecentModalOpen,
+      loadCachedDocument: state.loadCachedDocument,
+    }))
+  );
 
   const [mostRecentTitle, setMostRecentTitle] = useState<string>('Amostra da Legislação');
 

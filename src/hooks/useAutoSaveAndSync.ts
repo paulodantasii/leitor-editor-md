@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDriveService';
 import { saveRecentDocument } from '../services/recentDocumentsService';
 import { saveCoordinator } from '../services/saveCoordinator';
@@ -17,7 +18,16 @@ export function useAutoSaveAndSync() {
     setSyncNotification,
     setCloudConflict,
     fileHandle,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      document: state.document,
+      setDocument: state.setDocument,
+      setSyncStatus: state.setSyncStatus,
+      setSyncNotification: state.setSyncNotification,
+      setCloudConflict: state.setCloudConflict,
+      fileHandle: state.fileHandle,
+    }))
+  );
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const maxWaitTimerRef = useRef<NodeJS.Timeout | null>(null);

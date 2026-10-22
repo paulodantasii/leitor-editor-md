@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { getStoredClientId, setStoredClientId } from '../../services/msalService';
 import { X, Key, Info, Check } from 'lucide-react';
 
 export const SettingsModal: React.FC = () => {
-  const { isSettingsModalOpen, setIsSettingsModalOpen } = useAppStore();
+  const { isSettingsModalOpen, setIsSettingsModalOpen } = useAppStore(
+    useShallow((state) => ({
+      isSettingsModalOpen: state.isSettingsModalOpen,
+      setIsSettingsModalOpen: state.setIsSettingsModalOpen,
+    }))
+  );
   const [clientId, setClientIdInput] = useState(getStoredClientId());
   const [savedSuccess, setSavedSuccess] = useState(false);
 

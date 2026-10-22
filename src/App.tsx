@@ -62,7 +62,6 @@ export const App: React.FC = () => {
       // Ctrl+S / Cmd+S: salva o documento (bloqueia o "Salvar página" do navegador)
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (!hasDocument) return;
 
         const state = useAppStore.getState();
         const doc = state.document;

@@ -1,12 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Sliders, Sun, Moon, Type, Maximize2, RotateCw } from 'lucide-react';
 import { FontFamily, TextWidth } from '../../types';
 import { forceAppUpdate } from '../../services/appUpdateService';
 
 export const AppearanceMenu: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const { preferences, setPreferences } = useAppStore();
+  const { preferences, setPreferences } = useAppStore(
+    useShallow((state) => ({
+      preferences: state.preferences,
+      setPreferences: state.setPreferences,
+    }))
+  );
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu when clicking outside

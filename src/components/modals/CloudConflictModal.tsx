@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { downloadMarkdownFile } from '../../services/exportService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { AlertTriangle, Cloud, HardDrive, Download, X } from 'lucide-react';
@@ -12,7 +13,16 @@ export const CloudConflictModal: React.FC = () => {
     setDocument,
     setSyncStatus,
     setSyncNotification,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      cloudConflict: state.cloudConflict,
+      setCloudConflict: state.setCloudConflict,
+      document: state.document,
+      setDocument: state.setDocument,
+      setSyncStatus: state.setSyncStatus,
+      setSyncNotification: state.setSyncNotification,
+    }))
+  );
 
   if (!cloudConflict) return null;
 

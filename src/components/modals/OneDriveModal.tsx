@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { loginWithOneDrive, logoutOneDrive, getActiveAccount } from '../../services/msalService';
 import {
   listOneDriveItems,
@@ -43,7 +44,24 @@ export const OneDriveModal: React.FC = () => {
     setSyncNotification,
     setIsSettingsModalOpen,
     setFileHandle,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      isOneDriveModalOpen: state.isOneDriveModalOpen,
+      setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
+      oneDriveModalMode: state.oneDriveModalMode,
+      oneDriveSuccessAction: state.oneDriveSuccessAction,
+      setOneDriveSuccessAction: state.setOneDriveSuccessAction,
+      closeDocument: state.closeDocument,
+      userProfile: state.userProfile,
+      setUserProfile: state.setUserProfile,
+      document: state.document,
+      setDocument: state.setDocument,
+      setSyncStatus: state.setSyncStatus,
+      setSyncNotification: state.setSyncNotification,
+      setIsSettingsModalOpen: state.setIsSettingsModalOpen,
+      setFileHandle: state.setFileHandle,
+    }))
+  );
 
   const [items, setItems] = useState<OneDriveItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(undefined);

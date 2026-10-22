@@ -1,9 +1,15 @@
 import React, { useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { RefreshCw, CheckCircle, X } from 'lucide-react';
 
 export const SyncNotificationToast: React.FC = () => {
-  const { syncNotification, setSyncNotification } = useAppStore();
+  const { syncNotification, setSyncNotification } = useAppStore(
+    useShallow((state) => ({
+      syncNotification: state.syncNotification,
+      setSyncNotification: state.setSyncNotification,
+    }))
+  );
 
   useEffect(() => {
     if (syncNotification) {

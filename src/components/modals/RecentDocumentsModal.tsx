@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { RecentDocumentItem } from '../../types';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
 import {
@@ -25,7 +26,17 @@ export const RecentDocumentsModal: React.FC = () => {
     openRecentDocument,
     deleteRecentDocument,
     document: currentDoc,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      isRecentModalOpen: state.isRecentModalOpen,
+      setIsRecentModalOpen: state.setIsRecentModalOpen,
+      recentDocuments: state.recentDocuments,
+      loadRecentDocuments: state.loadRecentDocuments,
+      openRecentDocument: state.openRecentDocument,
+      deleteRecentDocument: state.deleteRecentDocument,
+      document: state.document,
+    }))
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);

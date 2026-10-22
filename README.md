@@ -60,7 +60,7 @@ Monitorado continuamente pelo hook `useAutoSaveAndSync.ts`:
 - **Debounce Idle de 3 segundos**: Dispara o salvamento 3 segundos após o usuário parar de digitar.
 - **Max-Wait de 30 segundos**: Em digitação ininterrupta, força a gravação a cada 30 segundos para evitar acúmulo de risco.
 - **Flush Imediato em Eventos de Saída**: Eventos de perda de foco (`blur`), mudança de visibilidade (`visibilitychange`) e descarregamento da página (`pagehide` / `beforeunload`) forçam a serialização e gravação imediata no cache local e no destino.
-- **Retentativas com Backoff Exponencial**: Falhas de rede sofrem retry automático com intervalos de 1 s, 2 s, 4 s e 8 s. Ao restabelecer a conexão (`online`), o app sincroniza imediatamente as alterações pendentes.
+- **Retentativas com Backoff Progressivo**: Falhas de rede sofrem retry automático com intervalos de 5 s, 15 s e 60 s (o último intervalo se repete). Ao restabelecer a conexão (`online`), o app sincroniza imediatamente as alterações pendentes.
 
 ---
 

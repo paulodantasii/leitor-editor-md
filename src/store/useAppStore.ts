@@ -43,7 +43,7 @@ interface AppState {
   setDocument: (doc: Partial<DocumentState>) => void;
   updateDocumentContent: (content: string) => void;
   markDocumentDirty: () => void;
-  loadCachedDocument: () => void;
+  loadCachedDocument: () => Promise<void>;
   createNewDocument: () => void;
   closeDocument: () => void;
 
