@@ -18,13 +18,12 @@ import {
   RefreshCw,
   MoreVertical,
   WifiOff,
-  Settings,
   FilePlus,
   Pencil,
   RotateCw,
   History,
   X,
-  Trash2,
+  Plus,
 } from 'lucide-react';
 import { forceAppUpdate } from '../../services/appUpdateService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
@@ -34,11 +33,11 @@ import { CloseErrorConflictModal } from '../modals/CloseErrorConflictModal';
 import { SaveDestinationModal } from '../modals/SaveDestinationModal';
 import { isBlankUntitledDocument } from '../../services/documentUtils';
 import { saveCoordinator } from '../../services/saveCoordinator';
+import { TabItem } from '../../types';
 
 export const Header: React.FC = () => {
   const hasDocument = useAppStore((state) => Boolean(state.document));
 
-  // Seletor de metadados: NÃO re-renderiza quando o conteúdo Markdown do texto é alterado
   const currentDoc = useAppStore(
     useShallow((state) => ({
       title: state.document?.title || '',
@@ -52,7 +51,12 @@ export const Header: React.FC = () => {
   );
 
   const {
-    setDocument,
+    tabs,
+    activeTabId,
+    openTab,
+    switchTab,
+    closeTab,
+    renameTab,
     fileHandle,
     setFileHandle,
     isHighlightMode,
@@ -64,7 +68,6 @@ export const Header: React.FC = () => {
     setSyncStatus,
     userProfile,
     setIsOneDriveModalOpen,
-    setIsSettingsModalOpen,
     createNewDocument,
     closeDocument,
     recentDocuments,
@@ -72,9 +75,15 @@ export const Header: React.FC = () => {
     isSaveDestinationModalOpen,
     setIsSaveDestinationModalOpen,
     cloudConflict,
+    syncNotification,
   } = useAppStore(
     useShallow((state) => ({
-      setDocument: state.setDocument,
+      tabs: state.tabs,
+      activeTabId: state.activeTabId,
+      openTab: state.openTab,
+      switchTab: state.switchTab,
+      closeTab: state.closeTab,
+      renameTab: state.renameTab,
       fileHandle: state.fileHandle,
       setFileHandle: state.setFileHandle,
       isHighlightMode: state.isHighlightMode,
@@ -86,7 +95,6 @@ export const Header: React.FC = () => {
       setSyncStatus: state.setSyncStatus,
       userProfile: state.userProfile,
       setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
-      setIsSettingsModalOpen: state.setIsSettingsModalOpen,
       createNewDocument: state.createNewDocument,
       closeDocument: state.closeDocument,
       recentDocuments: state.recentDocuments,
@@ -94,6 +102,7 @@ export const Header: React.FC = () => {
       isSaveDestinationModalOpen: state.isSaveDestinationModalOpen,
       setIsSaveDestinationModalOpen: state.setIsSaveDestinationModalOpen,
       cloudConflict: state.cloudConflict,
+      syncNotification: state.syncNotification,
     }))
   );
 
@@ -102,19 +111,27 @@ export const Header: React.FC = () => {
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
-  const [isCloseMenuOpen, setIsCloseMenuOpen] = useState(false);
-  const closeMenuRef = useRef<HTMLDivElement>(null);
+
   const [isCloseDraftModalOpen, setIsCloseDraftModalOpen] = useState(false);
   const [closeErrorConflict, setCloseErrorConflict] = useState<{ message: string } | null>(null);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editableTitle, setEditableTitle] = useState(currentDoc.title);
-  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  // Tab renaming state
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const tabRenameInputRef = useRef<HTMLInputElement>(null);
+
+  // Tab context menu state
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const tabContextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Guard action & tab closure confirmation state
   const [unsavedModalAction, setUnsavedModalAction] = useState<GuardActionType | null>(null);
+  const [tabToCloseId, setTabToCloseId] = useState<string | null>(null);
   const pendingActionRef = useRef<(() => void | Promise<void>) | null>(null);
 
-  // Close Export, Mobile & Close Dropdowns when clicking outside
+  // Close Export & Mobile Dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
@@ -123,73 +140,77 @@ export const Header: React.FC = () => {
       if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target as Node)) {
         setIsMobileMenuOpen(false);
       }
-      if (closeMenuRef.current && !closeMenuRef.current.contains(event.target as Node)) {
-        setIsCloseMenuOpen(false);
-      }
     };
-    if (isExportMenuOpen || isMobileMenuOpen || isCloseMenuOpen) {
+    if (isExportMenuOpen || isMobileMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isExportMenuOpen, isMobileMenuOpen, isCloseMenuOpen]);
+  }, [isExportMenuOpen, isMobileMenuOpen]);
 
-  // Sync editable title when document changes
+  // Close Tab Context Menu when clicking outside or pressing Escape
   useEffect(() => {
-    setEditableTitle(currentDoc.title);
-  }, [currentDoc.title]);
+    const handleClickOutside = (e: MouseEvent) => {
+      if (tabContextMenuRef.current && !tabContextMenuRef.current.contains(e.target as Node)) {
+        setTabContextMenu(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setTabContextMenu(null);
+      }
+    };
+    if (tabContextMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [tabContextMenu]);
 
-  const handleStartRename = () => {
-    setIsEditingTitle(true);
-    setEditableTitle(currentDoc.title);
+  // Inline tab rename triggers
+  const handleStartTabRename = (tab: TabItem) => {
+    setEditingTabId(tab.id);
+    setEditingTitle(tab.title);
     setTimeout(() => {
-      if (titleInputRef.current) {
-        titleInputRef.current.focus();
-        // Select filename without .md extension
-        const dotIndex = currentDoc.title.lastIndexOf('.');
+      if (tabRenameInputRef.current) {
+        tabRenameInputRef.current.focus();
+        const dotIndex = tab.title.lastIndexOf('.');
         if (dotIndex > 0) {
-          titleInputRef.current.setSelectionRange(0, dotIndex);
+          tabRenameInputRef.current.setSelectionRange(0, dotIndex);
         } else {
-          titleInputRef.current.select();
+          tabRenameInputRef.current.select();
         }
       }
-    }, 20);
+    }, 30);
   };
 
-  const handleFinishRename = () => {
-    setIsEditingTitle(false);
-    let finalTitle = editableTitle.trim();
-    if (!finalTitle) {
-      finalTitle = currentDoc.title || 'Sem Título.md';
-    } else if (
-      !finalTitle.toLowerCase().endsWith('.md') &&
-      !finalTitle.toLowerCase().endsWith('.markdown') &&
-      !finalTitle.toLowerCase().endsWith('.txt')
-    ) {
-      finalTitle = `${finalTitle}.md`;
-    }
-
-    if (finalTitle !== currentDoc.title) {
-      if (fileHandle && fileHandle.name !== finalTitle) {
-        setFileHandle(null);
-      }
-      setDocument({
-        title: finalTitle,
-        isDirty: true,
-      });
+  const handleFinishTabRename = () => {
+    if (editingTabId) {
+      renameTab(editingTabId, editingTitle);
+      setEditingTabId(null);
     }
   };
 
-  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleTabRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleFinishRename();
+      handleFinishTabRename();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      setEditableTitle(currentDoc.title);
-      setIsEditingTitle(false);
+      setEditingTabId(null);
     }
+  };
+
+  const handleOpenTabContextMenu = (e: React.MouseEvent, tab: TabItem) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const x = Math.min(e.clientX, window.innerWidth - 170);
+    const y = e.clientY + 8;
+    setTabContextMenu({ x, y, tabId: tab.id });
   };
 
   // Monitor online status for sync resilience
@@ -213,17 +234,36 @@ export const Header: React.FC = () => {
     };
   }, [syncStatus, currentDoc.isDirty, setSyncStatus]);
 
-  // Helper to guard actions against unsaved data loss
-  const executeWithGuard = (actionType: GuardActionType, callback: () => void | Promise<void>) => {
-    if (currentDoc.isDirty) {
-      pendingActionRef.current = callback;
-      setUnsavedModalAction(actionType);
-    } else {
-      callback();
+  // Fechamento inteligente de aba (X)
+  const handleCloseTabClick = (e: React.MouseEvent, tab: TabItem) => {
+    e.stopPropagation();
+
+    // 1. Se não houver alterações pendentes ou for rascunho em branco: fecha em silêncio imediato
+    const isBlank =
+      tab.title === 'Sem Título.md' &&
+      !tab.isDirty &&
+      (!tab.snapshot?.content || tab.snapshot.content.trim() === '');
+
+    if (!tab.isDirty || isBlank) {
+      closeTab(tab.id, true);
+      return;
     }
+
+    // 2. Se possuir alterações pendentes:
+    // Foca na aba primeiro se não for a ativa
+    if (tab.id !== activeTabId) {
+      switchTab(tab.id);
+    }
+
+    setTabToCloseId(tab.id);
+    setUnsavedModalAction('close');
   };
 
   const handleConfirmDiscard = () => {
+    if (tabToCloseId) {
+      closeTab(tabToCloseId, true);
+      setTabToCloseId(null);
+    }
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
     setUnsavedModalAction(null);
@@ -233,10 +273,14 @@ export const Header: React.FC = () => {
   const handleConfirmSaveAndProceed = async () => {
     const saved = await handleSaveFile();
     if (!saved) {
-      // Cancelou ou falhou: permanece no documento atual, sem perder alterações
       pendingActionRef.current = null;
       setUnsavedModalAction(null);
+      setTabToCloseId(null);
       return;
+    }
+    if (tabToCloseId) {
+      closeTab(tabToCloseId, true);
+      setTabToCloseId(null);
     }
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
@@ -247,27 +291,26 @@ export const Header: React.FC = () => {
   const handleCancelGuard = () => {
     pendingActionRef.current = null;
     setUnsavedModalAction(null);
+    setTabToCloseId(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  // Fluxo Salvar e Fechar (Fase 4 - Seção 3.2)
-  const handleSaveAndClose = async () => {
+  // Fluxo Salvar e Fechar ativo
+  const handleSaveAndCloseActive = async () => {
     const state = useAppStore.getState();
     const doc = state.document;
-    if (!doc) {
+    if (!doc || !state.activeTabId) {
       closeDocument();
       return;
     }
 
-    // 1. Documento efêmero e vazio? Fecha silenciosamente sem perguntar
     if (isBlankUntitledDocument(doc) && (!doc.content || doc.content.trim() === '')) {
       closeDocument();
       return;
     }
 
-    // 2. Flush do editor + rascunho local
     flushPendingEditorContent();
     const freshDoc = useAppStore.getState().document;
     if (!freshDoc) {
@@ -275,29 +318,24 @@ export const Header: React.FC = () => {
       return;
     }
 
-    // 3. Tem fonte gravável?
     const hasSource = Boolean(freshDoc.oneDriveItemId || fileHandle || freshDoc.fileHandle);
 
     if (hasSource) {
-      // saveCoordinator.save (estrito)
       const result = await saveCoordinator.save({ interactive: false });
       if (result.status === 'ok') {
         closeDocument();
         showNotification('Documento salvo e fechado');
       } else {
-        // Falha / offline / conflito
         setCloseErrorConflict({
           message: result.message || 'Falha de conexão ou erro no servidor',
         });
       }
     } else {
-      // Rascunho (só cache): pergunta onde salvar ou fechar como rascunho
       setIsCloseDraftModalOpen(true);
     }
   };
 
-  // Fechar sem salvar
-  const handleCloseWithoutSaving = () => {
+  const handleCloseActiveWithoutSaving = () => {
     const doc = useAppStore.getState().document;
     if (!doc) {
       closeDocument();
@@ -309,110 +347,81 @@ export const Header: React.FC = () => {
       return;
     }
 
-    if (doc.isDirty) {
-      pendingActionRef.current = () => {
-        closeDocument();
-      };
+    if (doc.isDirty && activeTabId) {
+      setTabToCloseId(activeTabId);
       setUnsavedModalAction('close');
     } else {
       closeDocument();
     }
   };
 
-  // Start Blank File with Intelligent Confirmation & Save Option
   const handleNewFile = () => {
-    flushPendingEditorContent();
-    const activeDoc = useAppStore.getState().document;
-    if (!activeDoc) {
-      createNewDocument();
-      showNotification('Novo documento em branco');
-      return;
-    }
-
-    const hasContent = Boolean(activeDoc.content && activeDoc.content.trim().length > 0);
-    const isDirty = activeDoc.isDirty;
-
-    if (isDirty || hasContent) {
-      pendingActionRef.current = () => {
-        createNewDocument();
-        showNotification('Novo documento em branco');
-      };
-      setUnsavedModalAction('new');
-      return;
-    }
-
     createNewDocument();
   };
 
-  // Native Open File with iPad/Mobile Fallback and Unsaved Guard
-  const handleOpenFile = () => {
-    executeWithGuard('open_local', async () => {
-      try {
-        if ('showOpenFilePicker' in window) {
-          const [handle] = await (window as any).showOpenFilePicker({
-            types: [
-              {
-                description: 'Arquivos Markdown',
-                accept: { 'text/markdown': ['.md', '.markdown', '.txt'] },
-              },
-            ],
-            multiple: false,
-          });
+  const handleOpenFile = async () => {
+    try {
+      if ('showOpenFilePicker' in window) {
+        const [handle] = await (window as any).showOpenFilePicker({
+          types: [
+            {
+              description: 'Arquivos Markdown',
+              accept: { 'text/markdown': ['.md', '.markdown', '.txt'] },
+            },
+          ],
+          multiple: false,
+        });
 
-          const file = await handle.getFile();
-          const text = await file.text();
+        const file = await handle.getFile();
+        const text = await file.text();
 
-          setFileHandle(handle);
-          setDocument({
+        openTab(
+          {
             title: file.name,
             content: text,
             oneDriveItemId: null,
             lastSavedAt: new Date().toLocaleTimeString(),
             isDirty: false,
-          });
-        } else {
-          // iPad / Mobile Fallback: Uses native Files app picker
-          fileInputRef.current?.click();
-        }
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          fileInputRef.current?.click();
-        }
+          },
+          handle
+        );
+      } else {
+        fileInputRef.current?.click();
       }
-    });
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        fileInputRef.current?.click();
+      }
+    }
   };
 
-  // Fallback File Upload Event (Mobile / iPad) with Unsaved Guard
   const handleFileUploadFallback = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const file = e.target?.files?.[0];
     if (!file) return;
 
-    const performLoad = () => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const rawText = event.target?.result as string;
-        if (rawText) {
-          setFileHandle(null);
-          setDocument({
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rawText = event.target?.result as string;
+      if (rawText) {
+        openTab(
+          {
             title: file.name,
             content: rawText,
             oneDriveItemId: null,
             lastSavedAt: new Date().toLocaleTimeString(),
             isDirty: false,
-          });
-        }
-      };
-      reader.readAsText(file);
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+          },
+          null
+        );
       }
     };
+    reader.readAsText(file);
 
-    executeWithGuard('open_local', performLoad);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
-  // Salvar: OneDrive → arquivo local conectado → "Salvar como"/download. Retorna true só se salvou de fato.
   const handleSaveFile = async (): Promise<boolean> => {
     const result = await saveActiveDocument();
     if (result.status === 'saved') {
@@ -425,7 +434,6 @@ export const Header: React.FC = () => {
     return false;
   };
 
-  // Clique no botão Salvar ou atalho: se o documento não tem fonte, abre o menu de destino (Seção 3.4)
   const handleSaveButtonClick = async (): Promise<boolean> => {
     const doc = useAppStore.getState().document;
     if (!doc) return false;
@@ -439,8 +447,6 @@ export const Header: React.FC = () => {
     return await handleSaveFile();
   };
 
-  // Indicador de status único (Fase 5 - Seção 3.3)
-  // Editando… · Rascunho salvo neste navegador · Salvando… · Salvo no OneDrive às 09:12 · Salvo no arquivo às 09:12 · Pendente (offline) · Conflito · Erro — tentar novamente
   const getUnifiedStatus = () => {
     if (cloudConflict) {
       return {
@@ -526,7 +532,7 @@ export const Header: React.FC = () => {
     }
 
     return {
-      text: 'Rascunho salvo neste navegador',
+      text: 'Rascunho salvo no cache',
       subtext: 'Armazenado no cache local',
       dotClass: 'bg-slate-400 dark:bg-slate-500',
       colorClass: 'text-slate-400 dark:text-slate-500',
@@ -537,7 +543,6 @@ export const Header: React.FC = () => {
 
   const statusInfo = getUnifiedStatus();
 
-  // Show temporary toast message
   const showNotification = (msg: string, isError: boolean = false) => {
     if (isError) {
       setSaveSuccessMessage(null);
@@ -550,7 +555,6 @@ export const Header: React.FC = () => {
     }
   };
 
-  // Export Standalone MD Copy
   const handleExportMD = () => {
     flushPendingEditorContent();
     const freshDoc = useAppStore.getState().document;
@@ -558,7 +562,6 @@ export const Header: React.FC = () => {
     downloadMarkdownFile(freshDoc.content, freshDoc.title || 'documento.md');
   };
 
-  // Print Clean Reader Page / Save as PDF
   const handlePrint = () => {
     flushPendingEditorContent();
     const freshDoc = useAppStore.getState().document;
@@ -566,150 +569,59 @@ export const Header: React.FC = () => {
     printDocument(freshDoc.title || 'documento');
   };
 
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
   return (
-    <header className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 header-safe-area transition-colors print:hidden">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
-        {/* Left Section: Logo & Document Title / Brand */}
-        {!hasDocument ? (
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center shadow-md shrink-0">
-              <Highlighter className="w-5 h-5" />
+    <header className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 header-safe-area transition-colors print:hidden shadow-xs">
+      {/* LINHA 1: Ações Principais e Indicadores de Status */}
+      <div className="h-10 sm:h-11 px-3 sm:px-4 flex items-center justify-between gap-2 sm:gap-4 max-w-7xl mx-auto">
+        {/* Esquerda / Centro-Esquerda: Status de salvamento e feedback inline */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+          {hasDocument && (
+            <div className="flex items-center gap-1.5 text-[11px] leading-tight shrink-0">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dotClass}`} />
+              {statusInfo.isClickable ? (
+                <button
+                  type="button"
+                  onClick={statusInfo.action}
+                  className={`px-1.5 py-0.5 rounded border transition-colors ${statusInfo.colorClass} ${statusInfo.badgeClass}`}
+                  title="Clique para tentar salvar novamente"
+                >
+                  {statusInfo.text}
+                </button>
+              ) : (
+                <span className={`truncate max-w-[140px] sm:max-w-[200px] md:max-w-none ${statusInfo.colorClass}`} title={statusInfo.subtext}>
+                  {statusInfo.text}
+                </span>
+              )}
             </div>
-            <div className="min-w-0">
-              <span className="text-sm sm:text-base font-extrabold text-slate-800 dark:text-slate-100 tracking-tight">
-                Leitor & Editor Markdown
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 max-w-full">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center shadow-md shrink-0">
-              <Highlighter className="w-5 h-5" />
-            </div>
+          )}
 
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 min-w-0">
-                {isEditingTitle ? (
-                  <input
-                    ref={titleInputRef}
-                    type="text"
-                    value={editableTitle}
-                    onChange={(e) => setEditableTitle(e.target.value)}
-                    onBlur={handleFinishRename}
-                    onKeyDown={handleTitleKeyDown}
-                    className="text-sm sm:text-base font-bold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0.5 -mx-1.5 outline-none ring-2 ring-blue-500/20 w-full min-w-0 max-w-[140px] sm:max-w-[240px] md:max-w-[320px] lg:max-w-[380px] xl:max-w-[480px] shadow-sm"
-                    title="Pressione Enter para salvar ou Esc para cancelar"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleStartRename}
-                    className="group flex items-center gap-1.5 text-left text-sm sm:text-base font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800/80 px-1.5 py-0.5 -mx-1.5 rounded transition-all cursor-pointer min-w-0 max-w-[140px] sm:max-w-[240px] md:max-w-[320px] lg:max-w-[380px] xl:max-w-[480px]"
-                    title="Clique para renomear o arquivo"
-                  >
-                    <span className="truncate">{currentDoc.title}</span>
-                    <Pencil className="w-3.5 h-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                  </button>
-                )}
+          {saveSuccessMessage && (
+            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full animate-in fade-in shrink-0">
+              ✓ {saveSuccessMessage}
+            </span>
+          )}
+          {saveErrorMessage && (
+            <span className="text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50 px-2 py-0.5 rounded-full animate-in fade-in truncate max-w-[200px] sm:max-w-[300px]" title={saveErrorMessage}>
+              ⚠ {saveErrorMessage}
+            </span>
+          )}
+          {syncNotification && !saveSuccessMessage && !saveErrorMessage && (
+            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded-full animate-in fade-in truncate max-w-[200px] sm:max-w-[300px]" title={syncNotification}>
+              {syncNotification}
+            </span>
+          )}
+        </div>
 
-                {/* Botão Fechar com Menu Dropdown (Fase 4 - Seção 3.3) */}
-                <div className="relative shrink-0 ml-0.5" ref={closeMenuRef}>
-                  <div className="flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700/80 transition-colors">
-                    <button
-                      type="button"
-                      onClick={handleSaveAndClose}
-                      className="p-1 hover:bg-slate-200/80 dark:hover:bg-slate-700 rounded-l-lg transition-colors cursor-pointer"
-                      title="Salvar e Fechar (Padrão)"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsCloseMenuOpen(!isCloseMenuOpen)}
-                      className="px-0.5 py-1 hover:bg-slate-200/80 dark:hover:bg-slate-700 rounded-r-lg border-l border-slate-200 dark:border-slate-700/80 transition-colors cursor-pointer"
-                      title="Opções de fechamento"
-                    >
-                      <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isCloseMenuOpen ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-
-                  {isCloseMenuOpen && (
-                    <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-1.5 w-48 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 z-50 space-y-1 animate-in fade-in zoom-in-95">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCloseMenuOpen(false);
-                          handleSaveAndClose();
-                        }}
-                        className="w-full px-2.5 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-lg flex items-center justify-between transition-colors group cursor-pointer"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Save className="w-3.5 h-3.5 text-blue-500" />
-                          Salvar e Fechar
-                        </span>
-                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-100 dark:bg-blue-950/60 px-1.5 py-0.5 rounded-full">
-                          Padrão
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCloseMenuOpen(false);
-                          handleCloseWithoutSaving();
-                        }}
-                        className="w-full px-2.5 py-2 text-left text-xs font-semibold hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg flex items-center gap-2 transition-colors text-red-600 dark:text-red-400 group cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        Fechar sem salvar
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {saveSuccessMessage && (
-                  <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full animate-in fade-in shrink-0">
-                    ✓ {saveSuccessMessage}
-                  </span>
-                )}
-                {saveErrorMessage && (
-                  <span className="text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50 px-2 py-0.5 rounded-full animate-in fade-in truncate max-w-[260px]" title={saveErrorMessage}>
-                    ⚠ {saveErrorMessage}
-                  </span>
-                )}
-              </div>
-
-              {/* Indicador de status único (Fase 5 - Seção 3.3) */}
-              <div className="flex items-center gap-1.5 text-[11px] leading-tight mt-0.5">
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dotClass}`} />
-                {statusInfo.isClickable ? (
-                  <button
-                    type="button"
-                    onClick={statusInfo.action}
-                    className={`px-1.5 py-0.2 rounded border transition-colors ${statusInfo.colorClass} ${statusInfo.badgeClass}`}
-                    title="Clique para tentar salvar novamente"
-                  >
-                    {statusInfo.text}
-                  </button>
-                ) : (
-                  <span className={`truncate ${statusInfo.colorClass}`} title={statusInfo.subtext}>
-                    {statusInfo.text}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Center/Right Section: Actions Toolbar */}
+        {/* Direita: Barra de Ferramentas de Ações */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* Ações específicas quando há documento aberto */}
           {hasDocument && (
             <>
               {/* Modo Grifar (Toggle Button + Badge) */}
               <button
                 onClick={toggleHighlightMode}
-                className={`px-2.5 sm:px-3 h-8 rounded-xl font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 ${
+                className={`px-2.5 sm:px-3 h-8 rounded-xl font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
                   isHighlightMode
                     ? 'bg-amber-500 text-white shadow-sm font-semibold'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -737,7 +649,7 @@ export const Header: React.FC = () => {
                   type="button"
                   onClick={() => setIsEditable(false)}
                   title="Modo Leitura (focado na leitura e grifos)"
-                  className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-xs transition-all duration-200 ${
+                  className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
                     !isEditable
                       ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm font-semibold'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
@@ -751,7 +663,7 @@ export const Header: React.FC = () => {
                   type="button"
                   onClick={() => setIsEditable(true)}
                   title="Modo Edição (digitação e formatação Markdown)"
-                  className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-xs transition-all duration-200 ${
+                  className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
                     isEditable
                       ? 'bg-blue-600 text-white shadow-sm font-semibold'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
@@ -773,23 +685,13 @@ export const Header: React.FC = () => {
             onChange={handleFileUploadFallback}
           />
 
-          {/* Desktop Actions: Novo, Abrir, Recentes */}
+          {/* Desktop Actions: Abrir, Recentes, Salvar, Exportar */}
           <div className="hidden lg:flex items-center gap-1 sm:gap-1.5 pl-1.5 sm:pl-2 border-l border-slate-200 dark:border-slate-800 shrink-0">
-            {/* Botão Novo */}
-            <button
-              onClick={handleNewFile}
-              title="Iniciar novo arquivo em branco"
-              className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0"
-            >
-              <FilePlus className="w-4 h-4 text-purple-500" />
-              <span className="hidden xl:inline">Novo</span>
-            </button>
-
             {/* Botão Abrir */}
             <button
               onClick={handleOpenFile}
               title="Abrir arquivo Markdown local"
-              className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0"
+              className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0 cursor-pointer"
             >
               <FolderOpen className="w-4 h-4 text-blue-500" />
               <span className="hidden xl:inline">Abrir</span>
@@ -799,7 +701,7 @@ export const Header: React.FC = () => {
             <button
               onClick={() => setIsRecentModalOpen(true)}
               title="Histórico de documentos recentes (até 30 em cache)"
-              className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0"
+              className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0 cursor-pointer"
             >
               <History className="w-4 h-4 text-amber-500" />
               <span className="hidden xl:inline">Recentes</span>
@@ -826,7 +728,7 @@ export const Header: React.FC = () => {
                   <button
                     onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
                     title="Exportar documento (Markdown ou PDF)"
-                    className={`px-2.5 sm:px-3 h-8 rounded-xl transition-colors flex items-center gap-1.5 text-xs font-medium shrink-0 ${
+                    className={`px-2.5 sm:px-3 h-8 rounded-xl transition-colors flex items-center gap-1.5 text-xs font-medium shrink-0 cursor-pointer ${
                       isExportMenuOpen
                         ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-sm'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -877,14 +779,13 @@ export const Header: React.FC = () => {
           {/* OneDrive Sync Button */}
           <button
             onClick={() => setIsOneDriveModalOpen(true)}
-            className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0"
+            className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0 cursor-pointer"
           >
             <Cloud className="w-4 h-4 text-blue-500" />
             <span className="hidden sm:inline">
               {userProfile ? userProfile.name.split(' ')[0] : 'OneDrive'}
             </span>
 
-            {/* Sync status indicator badge */}
             {syncStatus === 'saving' && <RefreshCw className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
             {syncStatus === 'saved' && <Check className="w-3.5 h-3.5 text-emerald-500" />}
             {syncStatus === 'offline-pending' && <WifiOff className="w-3.5 h-3.5 text-amber-500" />}
@@ -895,7 +796,7 @@ export const Header: React.FC = () => {
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               title="Mais opções"
-              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
+              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
                 isMobileMenuOpen
                   ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -911,7 +812,7 @@ export const Header: React.FC = () => {
                     handleNewFile();
                     setIsMobileMenuOpen(false);
                   }}
-                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
+                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
                 >
                   <FilePlus className="w-4 h-4 text-purple-500" /> Novo
                 </button>
@@ -920,7 +821,7 @@ export const Header: React.FC = () => {
                     handleOpenFile();
                     setIsMobileMenuOpen(false);
                   }}
-                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
+                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
                 >
                   <FolderOpen className="w-4 h-4 text-blue-500" /> Abrir
                 </button>
@@ -929,7 +830,7 @@ export const Header: React.FC = () => {
                     setIsRecentModalOpen(true);
                     setIsMobileMenuOpen(false);
                   }}
-                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center justify-between"
+                  className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
                     <History className="w-4 h-4 text-amber-500" /> Recentes
@@ -955,23 +856,23 @@ export const Header: React.FC = () => {
 
                     <div className="pt-1.5 border-t border-slate-100 dark:border-slate-700/60 mt-1 space-y-1">
                       <div className="px-2 py-0.5 text-[10px] font-bold uppercase text-slate-400 dark:text-slate-400 tracking-wider">
-                        Fechar Documento
+                        Aba Ativa
                       </div>
                       <button
                         onClick={() => {
                           setIsMobileMenuOpen(false);
-                          handleSaveAndClose();
+                          handleSaveAndCloseActive();
                         }}
-                        className="w-full p-2 text-left text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg flex items-center gap-2 font-semibold"
+                        className="w-full p-2 text-left text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg flex items-center gap-2 font-semibold cursor-pointer"
                       >
                         <Save className="w-4 h-4" /> Salvar e Fechar
                       </button>
                       <button
                         onClick={() => {
                           setIsMobileMenuOpen(false);
-                          handleCloseWithoutSaving();
+                          handleCloseActiveWithoutSaving();
                         }}
-                        className="w-full p-2 text-left text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg flex items-center gap-2"
+                        className="w-full p-2 text-left text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg flex items-center gap-2 cursor-pointer"
                       >
                         <X className="w-4 h-4" /> Fechar sem salvar
                       </button>
@@ -986,7 +887,7 @@ export const Header: React.FC = () => {
                           handleExportMD();
                           setIsMobileMenuOpen(false);
                         }}
-                        className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
+                        className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
                       >
                         <Download className="w-4 h-4 text-purple-500" /> Markdown
                       </button>
@@ -995,7 +896,7 @@ export const Header: React.FC = () => {
                           handlePrint();
                           setIsMobileMenuOpen(false);
                         }}
-                        className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
+                        className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
                       >
                         <Printer className="w-4 h-4 text-sky-500" /> PDF
                       </button>
@@ -1009,7 +910,7 @@ export const Header: React.FC = () => {
                       setIsMobileMenuOpen(false);
                       forceAppUpdate();
                     }}
-                    className="w-full p-2 text-left text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2"
+                    className="w-full p-2 text-left text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
                   >
                     <RotateCw className="w-4 h-4 text-blue-500" /> Recarregar App
                   </button>
@@ -1020,21 +921,141 @@ export const Header: React.FC = () => {
         </div>
       </div>
 
-      {/* Modal de confirmação de descarte de alterações */}
+      {/* LINHA 2: Barra Fina de Abas Estilo Navegador */}
+      {tabs.length > 0 && (
+        <div className="h-7 sm:h-8 bg-slate-50/80 dark:bg-slate-950/40 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center px-3 py-0.5">
+          <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5 max-w-7xl mx-auto w-full">
+            {tabs.map((tab) => {
+              const isActive = tab.id === activeTabId;
+              const isEditing = editingTabId === tab.id;
+
+              return (
+                <div
+                  key={tab.id}
+                  onClick={() => {
+                    if (!isEditing && !isActive) switchTab(tab.id);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    handleStartTabRename(tab);
+                  }}
+                  onContextMenu={(e) => handleOpenTabContextMenu(e, tab)}
+                  className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
+                    isActive
+                      ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
+                  }`}
+                  title={`${tab.title}${tab.isDirty ? ' (não salvo)' : ''} — Duplo clique para renomear`}
+                >
+                  {/* Dot indicador de alterações não salvas */}
+                  {tab.isDirty && (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 animate-pulse"
+                      title="Alterações não salvas"
+                    />
+                  )}
+
+                  {/* Nome da aba ou input inline de renomeação */}
+                  {isEditing ? (
+                    <input
+                      ref={tabRenameInputRef}
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onBlur={handleFinishTabRename}
+                      onKeyDown={handleTabRenameKeyDown}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1 py-0 outline-none w-28 sm:w-36 shadow-xs"
+                    />
+                  ) : (
+                    <span className="text-[11px] sm:text-xs truncate max-w-[120px] sm:max-w-[180px] md:max-w-[240px]">
+                      {tab.title}
+                    </span>
+                  )}
+
+                  {/* Botão Fechar Aba (X) com fechamento inteligente */}
+                  <button
+                    type="button"
+                    onClick={(e) => handleCloseTabClick(e, tab)}
+                    className="w-3.5 h-3.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
+                    title={tab.isDirty ? 'Fechar aba (alterações não salvas)' : 'Fechar aba'}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })}
+
+            {/* Botão + (Nova Aba) */}
+            <button
+              type="button"
+              onClick={handleNewFile}
+              title="Nova aba (novo arquivo em branco)"
+              className="w-6 h-6 rounded flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-purple-600 dark:hover:text-purple-400 transition-colors shrink-0 cursor-pointer ml-0.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Menu de Contexto Flutuante para Abas (Clique Direito) */}
+      {tabContextMenu && (
+        <div
+          ref={tabContextMenuRef}
+          style={{ top: `${tabContextMenu.y}px`, left: `${tabContextMenu.x}px` }}
+          className="fixed z-50 w-36 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1 space-y-0.5 animate-in fade-in zoom-in-95 text-xs font-medium"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const tab = tabs.find((t) => t.id === tabContextMenu.tabId);
+              setTabContextMenu(null);
+              if (tab) handleStartTabRename(tab);
+            }}
+            className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
+          >
+            <Pencil className="w-3.5 h-3.5 text-slate-400" />
+            Renomear
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              const tab = tabs.find((t) => t.id === tabContextMenu.tabId);
+              setTabContextMenu(null);
+              if (tab) handleCloseTabClick(e, tab);
+            }}
+            className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 text-red-600 dark:text-red-400 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+            Fechar aba
+          </button>
+        </div>
+      )}
+
+      {/* Modal de confirmação inteligente ao fechar documento/aba com alterações não salvas */}
       <UnsavedChangesModal
         isOpen={unsavedModalAction !== null}
         onClose={handleCancelGuard}
         onConfirmDiscard={handleConfirmDiscard}
         onConfirmSaveAndProceed={handleConfirmSaveAndProceed}
-        documentTitle={currentDoc.title}
-        actionType={unsavedModalAction || 'new'}
+        documentTitle={
+          (tabToCloseId && tabs.find((t) => t.id === tabToCloseId)?.title) ||
+          activeTab?.title ||
+          currentDoc.title
+        }
+        actionType={unsavedModalAction || 'close'}
+        customActionTitle="Fechar Aba"
+        customDescription="Esta aba possui alterações que ainda não foram salvas. O que você gostaria de fazer antes de fechar?"
       />
 
-      {/* Modal de seleção de destino ao salvar documento sem fonte permanente (Seção 3.4) */}
+      {/* Modal de seleção de destino ao salvar documento sem fonte permanente */}
       <SaveDestinationModal
         isOpen={isSaveDestinationModalOpen}
         onClose={() => setIsSaveDestinationModalOpen(false)}
-        documentTitle={currentDoc.title}
+        documentTitle={activeTab?.title || currentDoc.title}
         onSaveToOneDrive={() => {
           setIsSaveDestinationModalOpen(false);
           setIsOneDriveModalOpen(true, 'save_as');
@@ -1048,11 +1069,11 @@ export const Header: React.FC = () => {
         }}
       />
 
-      {/* Modal de fechamento de rascunho sem fonte permanente (Fase 4 - Seção 3.2) */}
+      {/* Modal de fechamento de rascunho sem fonte permanente */}
       <CloseDraftModal
         isOpen={isCloseDraftModalOpen}
         onClose={() => setIsCloseDraftModalOpen(false)}
-        documentTitle={currentDoc.title}
+        documentTitle={activeTab?.title || currentDoc.title}
         onSaveToOneDrive={() => {
           setIsCloseDraftModalOpen(false);
           setIsOneDriveModalOpen(true, 'save_as', 'close');
@@ -1073,13 +1094,13 @@ export const Header: React.FC = () => {
         }}
       />
 
-      {/* Modal de erro/conflito ao fechar (Fase 4 - Seção 3.2) */}
+      {/* Modal de erro/conflito ao fechar */}
       <CloseErrorConflictModal
         isOpen={closeErrorConflict !== null}
         message={closeErrorConflict?.message || ''}
         onRetry={() => {
           setCloseErrorConflict(null);
-          handleSaveAndClose();
+          handleSaveAndCloseActive();
         }}
         onCloseAndKeepPending={async () => {
           setCloseErrorConflict(null);
@@ -1094,4 +1115,3 @@ export const Header: React.FC = () => {
     </header>
   );
 };
-

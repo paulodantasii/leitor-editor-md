@@ -25,8 +25,7 @@ export interface HomeScreenProps {
 export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onCloseOverlay }) => {
   const {
     document: currentDoc,
-    setDocument,
-    setFileHandle,
+    openTab,
     setIsOneDriveModalOpen,
     createNewDocument,
     recentDocuments,
@@ -37,8 +36,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
   } = useAppStore(
     useShallow((state) => ({
       document: state.document,
-      setDocument: state.setDocument,
-      setFileHandle: state.setFileHandle,
+      openTab: state.openTab,
       setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
       createNewDocument: state.createNewDocument,
       recentDocuments: state.recentDocuments,
@@ -97,14 +95,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
         const file = await handle.getFile();
         const text = await file.text();
 
-        setFileHandle(handle);
-        setDocument({
-          title: file.name,
-          content: text,
-          oneDriveItemId: null,
-          lastSavedAt: new Date().toLocaleTimeString(),
-          isDirty: false,
-        });
+        openTab(
+          {
+            title: file.name,
+            content: text,
+            oneDriveItemId: null,
+            lastSavedAt: new Date().toLocaleTimeString(),
+            isDirty: false,
+          },
+          handle
+        );
         handleFinishAction();
       } else {
         // Fallback file input
@@ -118,14 +118,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
             reader.onload = (event) => {
               const rawText = event.target?.result as string;
               if (rawText) {
-                setFileHandle(null);
-                setDocument({
-                  title: file.name,
-                  content: rawText,
-                  oneDriveItemId: null,
-                  lastSavedAt: new Date().toLocaleTimeString(),
-                  isDirty: false,
-                });
+                openTab(
+                  {
+                    title: file.name,
+                    content: rawText,
+                    oneDriveItemId: null,
+                    lastSavedAt: new Date().toLocaleTimeString(),
+                    isDirty: false,
+                  },
+                  null
+                );
                 handleFinishAction();
               }
             };

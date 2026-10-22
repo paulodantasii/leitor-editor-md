@@ -9,6 +9,7 @@
     --editor-font: 'Inter', sans-serif;
     --editor-size: 16px;
     --editor-width: 80ch;
+    --header-height: 4.5rem; /* ~72px: Linha 1 (~44px) + Linha 2 (~28px) */
   }
 
   .dark {
@@ -26,8 +27,16 @@
 
 /* Safe area top padding for sticky header on iPad / iOS */
 .header-safe-area {
-  padding-top: calc(0.625rem + env(safe-area-inset-top, 0px));
-  padding-bottom: 0.625rem;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Hide scrollbar for horizontal tab strip */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Custom Highlight Mark Styling (Pastel colors) */

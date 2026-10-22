@@ -42,10 +42,12 @@ export function useAutoSaveAndSync() {
     currentDocRef.current = currentDoc;
   }, [currentDoc]);
 
-  // 1. Proteção contra fechamento acidental da página quando houver edições não salvas
+  // 1. Proteção contra fechamento acidental da página quando houver edições não salvas em qualquer aba aberta
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (currentDoc?.isDirty) {
+      const state = useAppStore.getState();
+      const hasAnyDirty = state.tabs.some((t) => t.isDirty) || Boolean(state.document?.isDirty);
+      if (hasAnyDirty) {
         e.preventDefault();
         e.returnValue = '';
         return '';
@@ -56,7 +58,7 @@ export function useAutoSaveAndSync() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [currentDoc?.isDirty]);
+  }, []);
 
   // 2. Política Inteligente de Autosave (OneDrive e Arquivo Local com Handle)
   useEffect(() => {

@@ -44,6 +44,27 @@ export interface DocumentState {
   fileHandle?: any;
 }
 
+export interface TabItem {
+  id: string; // Identificador único da aba (UUID)
+  title: string;
+  isDirty: boolean;
+  docId: string;
+  oneDriveItemId?: string | null;
+  fileHandle?: any | null;
+  snapshot?: DocumentState; // Snapshot completo do documento quando a aba está inativa
+}
+
+export interface OpenTabsSession {
+  activeTabId: string | null;
+  tabs: Array<{
+    id: string;
+    title: string;
+    docId: string;
+    oneDriveItemId: string | null;
+    isDirty: boolean;
+  }>;
+}
+
 export interface OneDriveItem {
   id: string;
   name: string;

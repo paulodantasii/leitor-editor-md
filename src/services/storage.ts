@@ -1,9 +1,10 @@
-import { UserPreferences, DocumentState } from '../types';
+import { UserPreferences, DocumentState, OpenTabsSession } from '../types';
 import { saveRecentDocument } from './recentDocumentsService';
 
 const PREFS_KEY = 'leitor_md_preferences';
 const DOC_KEY = 'leitor_md_document';
 const OFFLINE_QUEUE_KEY = 'leitor_md_offline_queue';
+const TABS_KEY = 'leitor_md_open_tabs_v1';
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
   theme: 'light',
@@ -17,9 +18,11 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
  */
 export function loadUserPreferences(): UserPreferences {
   try {
-    const saved = localStorage.getItem(PREFS_KEY);
-    if (saved) {
-      return { ...DEFAULT_PREFERENCES, ...JSON.parse(saved) };
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(PREFS_KEY);
+      if (saved) {
+        return { ...DEFAULT_PREFERENCES, ...JSON.parse(saved) };
+      }
     }
   } catch (err) {
     console.warn('Failed to load user preferences from localStorage', err);
@@ -129,9 +132,11 @@ export function clearLocalDocument(): void {
  */
 export function loadLocalDocument(): DocumentState | null {
   try {
-    const saved = localStorage.getItem(DOC_KEY);
-    if (saved) {
-      return JSON.parse(saved);
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(DOC_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
     }
   } catch (err) {
     console.warn('Failed to load local document backup', err);
@@ -168,5 +173,54 @@ export function getOfflineQueue(): Array<{ itemId: string; content: string; titl
  * Clears the offline sync queue.
  */
 export function clearOfflineQueue(): void {
-  localStorage.removeItem(OFFLINE_QUEUE_KEY);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(OFFLINE_QUEUE_KEY);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Persiste os metadados da sessão de abas abertas no localStorage.
+ */
+export function saveOpenTabsSession(session: OpenTabsSession): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(TABS_KEY, JSON.stringify(session));
+    }
+  } catch (err) {
+    console.warn('Falha ao salvar sessão de abas no localStorage:', err);
+  }
+}
+
+/**
+ * Carrega a sessão de abas abertas salva no localStorage.
+ */
+export function loadOpenTabsSession(): OpenTabsSession | null {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(TABS_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    }
+  } catch (err) {
+    console.warn('Falha ao carregar sessão de abas do localStorage:', err);
+  }
+  return null;
+}
+
+/**
+ * Remove a sessão de abas abertas do localStorage.
+ */
+export function clearOpenTabsSession(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(TABS_KEY);
+    }
+  } catch {
+    // ignore
+  }
 }

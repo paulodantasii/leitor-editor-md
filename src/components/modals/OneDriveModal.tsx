@@ -40,6 +40,7 @@ export const OneDriveModal: React.FC = () => {
     setUserProfile,
     document: currentDoc,
     setDocument,
+    openTab,
     setSyncStatus,
     setSyncNotification,
     setIsSettingsModalOpen,
@@ -56,6 +57,7 @@ export const OneDriveModal: React.FC = () => {
       setUserProfile: state.setUserProfile,
       document: state.document,
       setDocument: state.setDocument,
+      openTab: state.openTab,
       setSyncStatus: state.setSyncStatus,
       setSyncNotification: state.setSyncNotification,
       setIsSettingsModalOpen: state.setIsSettingsModalOpen,
@@ -182,8 +184,7 @@ export const OneDriveModal: React.FC = () => {
     try {
       const rawText = await downloadOneDriveFile(file.id);
 
-      setFileHandle(null);
-      setDocument({
+      openTab({
         title: file.name,
         content: rawText,
         oneDriveItemId: file.id,
@@ -192,7 +193,7 @@ export const OneDriveModal: React.FC = () => {
         cloudLastModified: file.lastModifiedDateTime,
         cloudETag: file.eTag || null,
         docId: `onedrive:${file.id}`,
-      });
+      }, null);
 
       setSyncStatus('saved');
       setIsOneDriveModalOpen(false);
@@ -209,12 +210,7 @@ export const OneDriveModal: React.FC = () => {
       return;
     }
 
-    if (currentDoc?.isDirty) {
-      setPendingFileToOpen(file);
-      setIsUnsavedGuardOpen(true);
-    } else {
-      doOpenFile(file);
-    }
+    doOpenFile(file);
   };
 
   const handleConfirmDiscardFromGuard = () => {

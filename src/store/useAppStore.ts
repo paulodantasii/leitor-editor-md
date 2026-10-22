@@ -6,6 +6,8 @@ import {
   DocumentState,
   UserProfile,
   RecentDocumentItem,
+  TabItem,
+  OpenTabsSession,
 } from '../types';
 import {
   loadUserPreferences,
@@ -13,6 +15,9 @@ import {
   loadLocalDocument,
   saveLocalDocument,
   clearLocalDocument,
+  saveOpenTabsSession,
+  loadOpenTabsSession,
+  clearOpenTabsSession,
 } from '../services/storage';
 import {
   getRecentDocuments,
@@ -22,12 +27,21 @@ import {
   cleanupBlankRecentDocuments,
 } from '../services/recentDocumentsService';
 import { isBlankUntitledDocument } from '../services/documentUtils';
+import { flushPendingEditorContent } from '../services/editorContentBridge';
 import { SAMPLE_LEGISLATION_DOC } from '../components/sampleDocs';
 
 interface AppState {
   // Preferences
   preferences: UserPreferences;
   setPreferences: (updater: Partial<UserPreferences> | ((prev: UserPreferences) => UserPreferences)) => void;
+
+  // Tab Management
+  tabs: TabItem[];
+  activeTabId: string | null;
+  openTab: (doc: Partial<DocumentState> & { title: string; content?: string }, fileHandle?: any) => string;
+  switchTab: (tabId: string) => Promise<void>;
+  closeTab: (tabId: string, forceWithoutSaving?: boolean) => void;
+  renameTab: (tabId: string, newTitle: string) => void;
 
   // Editor Modes
   isHighlightMode: boolean;
@@ -114,6 +128,40 @@ const getInitialDoc = (): DocumentState | null => {
 };
 
 const initialDoc: DocumentState | null = getInitialDoc();
+const savedSession = loadOpenTabsSession();
+
+let initialTabs: TabItem[] = [];
+let initialActiveTabId: string | null = null;
+
+if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
+  initialActiveTabId = savedSession.activeTabId || savedSession.tabs[0].id;
+  initialTabs = savedSession.tabs.map((t) => {
+    const isCurActive = t.id === initialActiveTabId;
+    return {
+      id: t.id,
+      title: t.title,
+      isDirty: t.isDirty,
+      docId: t.docId,
+      oneDriveItemId: t.oneDriveItemId,
+      fileHandle: isCurActive && initialDoc ? initialDoc.fileHandle || null : null,
+      snapshot: isCurActive && initialDoc ? initialDoc : undefined,
+    };
+  });
+} else if (initialDoc) {
+  const tabId = 'tab-initial';
+  initialTabs = [
+    {
+      id: tabId,
+      title: initialDoc.title,
+      isDirty: initialDoc.isDirty,
+      docId: initialDoc.docId || 'doc-initial',
+      oneDriveItemId: initialDoc.oneDriveItemId,
+      fileHandle: initialDoc.fileHandle || null,
+      snapshot: initialDoc,
+    },
+  ];
+  initialActiveTabId = tabId;
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Preferences
@@ -123,6 +171,403 @@ export const useAppStore = create<AppState>((set, get) => ({
       const newPrefs = typeof updater === 'function' ? updater(state.preferences) : { ...state.preferences, ...updater };
       saveUserPreferences(newPrefs);
       return { preferences: newPrefs };
+    });
+  },
+
+  // Tab Management
+  tabs: initialTabs,
+  activeTabId: initialActiveTabId,
+
+  openTab: (doc, fileHandle) => {
+    const state = get();
+
+    // 1. Verifica se já existe aba aberta com o mesmo arquivo (OneDrive ou handle/docId idêntico)
+    const existingTab = state.tabs.find((t) => {
+      if (doc.oneDriveItemId && t.oneDriveItemId && doc.oneDriveItemId === t.oneDriveItemId) {
+        return true;
+      }
+      if (doc.docId && t.docId && doc.docId === t.docId) {
+        return true;
+      }
+      if (fileHandle && t.fileHandle && fileHandle === t.fileHandle) {
+        return true;
+      }
+      if (fileHandle && t.fileHandle && fileHandle.name && t.fileHandle.name && fileHandle.name === t.fileHandle.name && doc.title === t.title) {
+        return true;
+      }
+      return false;
+    });
+
+    if (existingTab) {
+      get().switchTab(existingTab.id);
+      get().setSyncNotification('Arquivo já está aberto nesta aba');
+      return existingTab.id;
+    }
+
+    // 2. Se o documento ativo for um rascunho em branco sem título e sem conteúdo, reutiliza a aba ativa
+    const isCurrentBlank =
+      state.document &&
+      isBlankUntitledDocument(state.document) &&
+      (!state.document.content || state.document.content.trim() === '') &&
+      !state.document.isDirty;
+
+    const targetDocId = doc.docId || `doc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const rev = doc.revision ?? (doc.isDirty ? 1 : 0);
+    const srcRev = doc.sourceRevision ?? (doc.isDirty ? 0 : rev);
+    const draftRev = doc.draftRevision ?? rev;
+
+    const normalizedDoc: DocumentState = {
+      title: doc.title,
+      content: doc.content ?? '',
+      oneDriveItemId: doc.oneDriveItemId ?? null,
+      lastSavedAt: doc.lastSavedAt ?? null,
+      isDirty: doc.isDirty ?? false,
+      revision: rev,
+      sourceRevision: srcRev,
+      draftRevision: draftRev,
+      docId: targetDocId,
+      cloudLastModified: doc.cloudLastModified ?? null,
+      cloudETag: doc.cloudETag ?? null,
+      localLastModified: doc.localLastModified ?? null,
+      fileHandle: fileHandle || doc.fileHandle || null,
+    };
+
+    if (isCurrentBlank && state.activeTabId) {
+      const updatedDoc = normalizedDoc;
+      const updatedTabs = state.tabs.map((t) =>
+        t.id === state.activeTabId
+          ? {
+              ...t,
+              title: updatedDoc.title,
+              isDirty: updatedDoc.isDirty,
+              docId: targetDocId,
+              oneDriveItemId: updatedDoc.oneDriveItemId,
+              fileHandle: updatedDoc.fileHandle,
+              snapshot: updatedDoc,
+            }
+          : t
+      );
+      set({
+        tabs: updatedTabs,
+        document: updatedDoc,
+        fileHandle: updatedDoc.fileHandle,
+        syncStatus: updatedDoc.isDirty ? 'idle' : 'saved',
+        syncNotification: null,
+        cloudConflict: null,
+      });
+      saveLocalDocument(updatedDoc);
+      saveOpenTabsSession({
+        activeTabId: state.activeTabId,
+        tabs: updatedTabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          docId: t.docId,
+          oneDriveItemId: t.oneDriveItemId || null,
+          isDirty: t.isDirty,
+        })),
+      });
+      return state.activeTabId;
+    }
+
+    // 3. Caso contrário, descarrega o editor atual e adiciona nova aba
+    flushPendingEditorContent();
+    const currentDoc = get().document;
+    const currentHandle = get().fileHandle;
+
+    const tabId = `tab-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newDoc = normalizedDoc;
+
+    const newTab: TabItem = {
+      id: tabId,
+      title: newDoc.title,
+      isDirty: newDoc.isDirty,
+      docId: targetDocId,
+      oneDriveItemId: newDoc.oneDriveItemId,
+      fileHandle: newDoc.fileHandle,
+      snapshot: newDoc,
+    };
+
+    const updatedTabs = state.tabs.map((t) => {
+      if (t.id === state.activeTabId && currentDoc) {
+        return {
+          ...t,
+          title: currentDoc.title,
+          isDirty: currentDoc.isDirty,
+          fileHandle: currentHandle,
+          snapshot: { ...currentDoc, fileHandle: currentHandle },
+        };
+      }
+      return t;
+    });
+
+    const nextTabs = [...updatedTabs, newTab];
+
+    set({
+      tabs: nextTabs,
+      activeTabId: tabId,
+      document: newDoc,
+      fileHandle: fileHandle || doc.fileHandle || null,
+      syncStatus: doc.isDirty ? 'idle' : 'saved',
+      syncNotification: null,
+      cloudConflict: null,
+    });
+
+    saveLocalDocument(newDoc);
+    saveOpenTabsSession({
+      activeTabId: tabId,
+      tabs: nextTabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        docId: t.docId,
+        oneDriveItemId: t.oneDriveItemId || null,
+        isDirty: t.isDirty,
+      })),
+    });
+
+    return tabId;
+  },
+
+  switchTab: async (tabId: string) => {
+    const state = get();
+    if (tabId === state.activeTabId) return;
+
+    flushPendingEditorContent();
+    const currentDoc = get().document;
+    const currentHandle = get().fileHandle;
+
+    const updatedTabs = get().tabs.map((t) => {
+      if (t.id === state.activeTabId && currentDoc) {
+        return {
+          ...t,
+          title: currentDoc.title,
+          isDirty: currentDoc.isDirty,
+          fileHandle: currentHandle,
+          snapshot: { ...currentDoc, fileHandle: currentHandle },
+        };
+      }
+      return t;
+    });
+
+    const targetTab = updatedTabs.find((t) => t.id === tabId);
+    if (!targetTab) return;
+
+    let targetDoc: DocumentState | null = targetTab.snapshot || null;
+    let targetHandle = targetTab.fileHandle || null;
+
+    if (!targetDoc) {
+      try {
+        const recents = await getRecentDocuments();
+        const match = recents.find(
+          (r) =>
+            (targetTab.oneDriveItemId && r.oneDriveItemId === targetTab.oneDriveItemId) ||
+            r.id === targetTab.docId ||
+            r.title === targetTab.title
+        );
+        if (match) {
+          targetDoc = {
+            title: match.title,
+            content: match.content,
+            oneDriveItemId: match.oneDriveItemId,
+            lastSavedAt: match.lastSavedAt,
+            isDirty: targetTab.isDirty,
+            revision: match.revision ?? 0,
+            draftRevision: match.draftRevision ?? 0,
+            sourceRevision: match.sourceRevision ?? 0,
+            docId: targetTab.docId,
+            cloudLastModified: match.cloudLastModified,
+            cloudETag: match.cloudETag,
+            localLastModified: match.localLastModified,
+            fileHandle: match.fileHandle,
+          };
+          targetHandle = match.fileHandle || null;
+        }
+      } catch (err) {
+        console.warn('Erro ao restaurar documento da aba do IndexedDB:', err);
+      }
+    }
+
+    if (!targetDoc) {
+      targetDoc = {
+        title: targetTab.title,
+        content: '',
+        oneDriveItemId: targetTab.oneDriveItemId || null,
+        lastSavedAt: null,
+        isDirty: targetTab.isDirty,
+        revision: 0,
+        draftRevision: 0,
+        sourceRevision: 0,
+        docId: targetTab.docId,
+      };
+    }
+
+    const finalTabs = updatedTabs.map((t) =>
+      t.id === tabId ? { ...t, snapshot: targetDoc!, fileHandle: targetHandle } : t
+    );
+
+    set({
+      tabs: finalTabs,
+      activeTabId: tabId,
+      document: targetDoc,
+      fileHandle: targetHandle,
+      syncStatus: targetDoc.isDirty ? 'idle' : 'saved',
+      syncNotification: null,
+      cloudConflict: null,
+    });
+
+    saveLocalDocument(targetDoc);
+    saveOpenTabsSession({
+      activeTabId: tabId,
+      tabs: finalTabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        docId: t.docId,
+        oneDriveItemId: t.oneDriveItemId || null,
+        isDirty: t.isDirty,
+      })),
+    });
+  },
+
+  closeTab: (tabId: string, forceWithoutSaving?: boolean) => {
+    const state = get();
+    const tabToClose = state.tabs.find((t) => t.id === tabId);
+    if (!tabToClose) return;
+
+    if (!forceWithoutSaving && tabToClose.isDirty) {
+      return;
+    }
+
+    const tabIndex = state.tabs.findIndex((t) => t.id === tabId);
+    const remainingTabs = state.tabs.filter((t) => t.id !== tabId);
+
+    if (remainingTabs.length === 0) {
+      clearLocalDocument();
+      clearOpenTabsSession();
+      set({
+        tabs: [],
+        activeTabId: null,
+        document: null,
+        fileHandle: null,
+        isEditable: false,
+        isHighlightMode: false,
+        highlightCount: 0,
+        syncStatus: 'idle',
+        syncNotification: null,
+        cloudConflict: null,
+      });
+      return;
+    }
+
+    if (state.activeTabId === tabId) {
+      const nextIndex = tabIndex < remainingTabs.length ? tabIndex : remainingTabs.length - 1;
+      const nextTab = remainingTabs[nextIndex];
+
+      const nextDoc: DocumentState = nextTab.snapshot || {
+        title: nextTab.title,
+        content: '',
+        oneDriveItemId: nextTab.oneDriveItemId || null,
+        lastSavedAt: null,
+        isDirty: nextTab.isDirty,
+        revision: 0,
+        draftRevision: 0,
+        sourceRevision: 0,
+        docId: nextTab.docId,
+      };
+
+      set({
+        tabs: remainingTabs,
+        activeTabId: nextTab.id,
+        document: nextDoc,
+        fileHandle: nextTab.fileHandle || null,
+        syncStatus: nextDoc.isDirty ? 'idle' : 'saved',
+        syncNotification: null,
+        cloudConflict: null,
+      });
+
+      saveLocalDocument(nextDoc);
+      saveOpenTabsSession({
+        activeTabId: nextTab.id,
+        tabs: remainingTabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          docId: t.docId,
+          oneDriveItemId: t.oneDriveItemId || null,
+          isDirty: t.isDirty,
+        })),
+      });
+    } else {
+      set({ tabs: remainingTabs });
+      saveOpenTabsSession({
+        activeTabId: state.activeTabId,
+        tabs: remainingTabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          docId: t.docId,
+          oneDriveItemId: t.oneDriveItemId || null,
+          isDirty: t.isDirty,
+        })),
+      });
+    }
+  },
+
+  renameTab: (tabId: string, newTitle: string) => {
+    let finalTitle = newTitle.trim();
+    if (!finalTitle) {
+      finalTitle = 'Sem Título.md';
+    } else if (
+      !finalTitle.toLowerCase().endsWith('.md') &&
+      !finalTitle.toLowerCase().endsWith('.markdown') &&
+      !finalTitle.toLowerCase().endsWith('.txt')
+    ) {
+      finalTitle = `${finalTitle}.md`;
+    }
+
+    const state = get();
+    const isActive = state.activeTabId === tabId;
+    const currentDoc = state.document;
+
+    const nextTabs = state.tabs.map((t) => {
+      if (t.id === tabId) {
+        const snap = t.snapshot ? { ...t.snapshot, title: finalTitle, isDirty: true } : undefined;
+        return {
+          ...t,
+          title: finalTitle,
+          isDirty: true,
+          snapshot: snap,
+        };
+      }
+      return t;
+    });
+
+    if (isActive && currentDoc) {
+      const updatedDoc: DocumentState = {
+        ...currentDoc,
+        title: finalTitle,
+        isDirty: true,
+        revision: (currentDoc.revision ?? 0) + 1,
+      };
+      let newHandle = state.fileHandle;
+      if (newHandle && newHandle.name !== finalTitle) {
+        newHandle = null;
+      }
+      set({
+        tabs: nextTabs,
+        document: updatedDoc,
+        fileHandle: newHandle,
+      });
+      saveLocalDocument(updatedDoc);
+    } else {
+      set({ tabs: nextTabs });
+    }
+
+    saveOpenTabsSession({
+      activeTabId: state.activeTabId,
+      tabs: nextTabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        docId: t.docId,
+        oneDriveItemId: t.oneDriveItemId || null,
+        isDirty: t.isDirty,
+      })),
     });
   },
 
@@ -200,7 +645,59 @@ export const useAppStore = create<AppState>((set, get) => ({
           : {}),
       };
       saveLocalDocument(updated);
-      return { document: updated };
+
+      let updatedTabs = state.tabs;
+      if (state.activeTabId) {
+        updatedTabs = state.tabs.map((t) =>
+          t.id === state.activeTabId
+            ? {
+                ...t,
+                title: updated.title,
+                isDirty: updated.isDirty,
+                docId: updated.docId || t.docId,
+                oneDriveItemId: updated.oneDriveItemId !== undefined ? updated.oneDriveItemId : t.oneDriveItemId,
+                fileHandle: state.fileHandle,
+                snapshot: updated,
+              }
+            : t
+        );
+      } else {
+        const newTabId = 'tab-' + Date.now();
+        const newTab: TabItem = {
+          id: newTabId,
+          title: updated.title,
+          isDirty: updated.isDirty,
+          docId: updated.docId || 'doc-initial',
+          oneDriveItemId: updated.oneDriveItemId,
+          fileHandle: state.fileHandle,
+          snapshot: updated,
+        };
+        updatedTabs = [newTab];
+        saveOpenTabsSession({
+          activeTabId: newTabId,
+          tabs: updatedTabs.map((t) => ({
+            id: t.id,
+            title: t.title,
+            docId: t.docId,
+            oneDriveItemId: t.oneDriveItemId || null,
+            isDirty: t.isDirty,
+          })),
+        });
+        return { document: updated, tabs: updatedTabs, activeTabId: newTabId };
+      }
+
+      saveOpenTabsSession({
+        activeTabId: state.activeTabId,
+        tabs: updatedTabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          docId: t.docId,
+          oneDriveItemId: t.oneDriveItemId || null,
+          isDirty: t.isDirty,
+        })),
+      });
+
+      return { document: updated, tabs: updatedTabs };
     });
   },
   updateDocumentContent: (content) => {
@@ -215,25 +712,61 @@ export const useAppStore = create<AppState>((set, get) => ({
         isDirty: newRevision > sourceRev,
       };
       saveLocalDocument(updated);
-      return { document: updated };
+
+      const updatedTabs = state.tabs.map((t) =>
+        t.id === state.activeTabId
+          ? {
+              ...t,
+              isDirty: updated.isDirty,
+              snapshot: updated,
+            }
+          : t
+      );
+
+      saveOpenTabsSession({
+        activeTabId: state.activeTabId,
+        tabs: updatedTabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          docId: t.docId,
+          oneDriveItemId: t.oneDriveItemId || null,
+          isDirty: t.isDirty,
+        })),
+      });
+
+      return { document: updated, tabs: updatedTabs };
     });
   },
   markDocumentDirty: () => {
     set((state) => {
       if (!state.document) return state;
       const newRevision = (state.document.revision ?? 0) + 1;
+      const updated: DocumentState = {
+        ...state.document,
+        revision: newRevision,
+        isDirty: true,
+      };
+      const updatedTabs = state.tabs.map((t) =>
+        t.id === state.activeTabId
+          ? {
+              ...t,
+              isDirty: true,
+              snapshot: updated,
+            }
+          : t
+      );
       return {
-        document: {
-          ...state.document,
-          revision: newRevision,
-          isDirty: true,
-        },
+        document: updated,
+        tabs: updatedTabs,
       };
     });
   },
   closeDocument: () => {
     clearLocalDocument();
+    clearOpenTabsSession();
     set({
+      tabs: [],
+      activeTabId: null,
       document: null,
       fileHandle: null,
       isEditable: false,
@@ -249,16 +782,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (loaded && !isBlankUntitledDocument(loaded)) {
       const rev = loaded.revision ?? 0;
       const srcRev = loaded.sourceRevision ?? rev;
-      set({
-        document: {
+      get().openTab(
+        {
           ...loaded,
           revision: rev,
           sourceRevision: srcRev,
           draftRevision: loaded.draftRevision ?? rev,
           docId: loaded.docId || `doc-${Date.now()}`,
         },
-        fileHandle: loaded.fileHandle || null,
-      });
+        loaded.fileHandle || null
+      );
       return;
     }
 
@@ -272,19 +805,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       // ignore
     }
 
-    set({
-      document: {
-        title: 'Constituição Federal - Amostra Vade Mecum.md',
-        content: SAMPLE_LEGISLATION_DOC,
-        oneDriveItemId: null,
-        lastSavedAt: null,
-        isDirty: false,
-        revision: 0,
-        draftRevision: 0,
-        sourceRevision: 0,
-        docId: 'doc-sample',
-      },
-      fileHandle: null,
+    get().openTab({
+      title: 'Constituição Federal - Amostra Vade Mecum.md',
+      content: SAMPLE_LEGISLATION_DOC,
+      oneDriveItemId: null,
+      lastSavedAt: null,
+      isDirty: false,
+      revision: 0,
+      draftRevision: 0,
+      sourceRevision: 0,
+      docId: 'doc-sample',
     });
   },
   createNewDocument: () => {
@@ -301,8 +831,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       sourceRevision: 0,
       docId: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     };
+    get().openTab(newDoc);
     set({
-      document: newDoc,
       fileHandle: null,
       highlightCount: 0,
       isEditable: true, // Já abre em modo de edição para digitar direto
@@ -326,9 +856,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ syncStatus: 'saving' });
       const { doc, updatedFromCloud, warning } = await loadRecentDocumentWithCloudSync(item);
 
+      get().openTab(doc, doc.fileHandle || null);
+
       set({
-        document: doc,
-        fileHandle: doc.fileHandle || null,
         syncStatus: updatedFromCloud ? 'saved' : 'idle',
         highlightCount: 0,
       });

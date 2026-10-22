@@ -84,12 +84,7 @@ export const RecentDocumentsModal: React.FC = () => {
   };
 
   const handleItemClick = (item: RecentDocumentItem) => {
-    if (currentDoc?.isDirty) {
-      setPendingItemToOpen(item);
-      setIsUnsavedGuardOpen(true);
-    } else {
-      doOpenItem(item);
-    }
+    doOpenItem(item);
   };
 
   const handleConfirmDiscardFromGuard = () => {
