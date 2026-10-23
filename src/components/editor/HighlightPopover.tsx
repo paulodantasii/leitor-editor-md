@@ -23,6 +23,7 @@ export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
   activeColor,
   onSelectColor,
   onRemoveHighlight,
+  onClose,
 }) => {
   return (
     <div
@@ -40,6 +41,13 @@ export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
+              onClose();
+              onSelectColor(c.id);
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
               onSelectColor(c.id);
             }}
             onMouseDown={(e) => e.preventDefault()}

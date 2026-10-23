@@ -412,28 +412,24 @@ export const TiptapEditor: React.FC = () => {
 
   // Ref to debounce touch and mouse events on mobile/iPad
   const lastPointerDownTimeRef = useRef(0);
+  const touchStartXRef = useRef(0);
+  const touchStartYRef = useRef(0);
 
   // Handle click on marks (activate popover) vs click outside marks (deactivate popover)
   useEffect(() => {
-    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+    // Handler para MOUSE (desktop) — lógica inalterada
+    const handleMouseDown = (e: MouseEvent) => {
       if (!editor || editor.isDestroyed || isEditable) return;
 
       const now = Date.now();
-      if (e.type === 'touchstart') {
-        lastPointerDownTimeRef.current = now;
-      } else if (e.type === 'mousedown' && now - lastPointerDownTimeRef.current < 400) {
-        return;
-      }
+      // Guard: ignora mousedown sintético gerado logo após touchend (400ms)
+      if (now - lastPointerDownTimeRef.current < 400) return;
 
       const target = e.target as HTMLElement;
       if (!target) return;
 
-      // Don't close if clicking inside the popover itself
-      if (target.closest('[data-highlight-popover]')) {
-        return;
-      }
+      if (target.closest('[data-highlight-popover]')) return;
 
-      // Check if clicking on a highlight mark (finger cursor)
       const markEl = target.closest('mark');
       if (markEl && containerRef.current?.contains(markEl)) {
         try {
@@ -444,21 +440,18 @@ export const TiptapEditor: React.FC = () => {
             const currentActiveId = editor.getAttributes('customHighlight').id;
             const currentSel = editor.state.selection;
 
-            // Check if the popover is already open for this exact highlight mark:
             const isSameMark =
               isPopoverOpenRef.current &&
               ((clickedId && currentActiveId && clickedId === currentActiveId) ||
                 (!clickedId && !currentActiveId && pos >= currentSel.from - 2 && pos <= currentSel.to + 2 && editor.isActive('customHighlight')));
 
             if (isSameMark) {
-              // 2nd click: close the popover and clear mark selection cleanly
               setPopoverOpen(false);
               editor.commands.setTextSelection(pos);
               window.getSelection()?.removeAllRanges();
               return;
             }
 
-            // 1st click (or 3rd click after closing): Open color popover
             setPopoverOpen(true);
             editor.commands.setTextSelection(pos + 1);
             return;
@@ -468,18 +461,88 @@ export const TiptapEditor: React.FC = () => {
         }
       }
 
-      // Clicked outside any mark (normal arrow cursor) -> deactivate popover if active without scanning doc
       if (isPopoverOpenRef.current) {
         setPopoverOpen(false);
         window.getSelection()?.removeAllRanges();
       }
     };
 
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('touchstart', handlePointerDown);
+    // Handler TOUCH FASE 1: apenas grava coordenadas e timestamp, NÃO abre popover
+    const handleTouchStart = (e: TouchEvent) => {
+      if (!editor || editor.isDestroyed || isEditable) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      lastPointerDownTimeRef.current = Date.now();
+      touchStartXRef.current = touch.clientX;
+      touchStartYRef.current = touch.clientY;
+    };
+
+    // Handler TOUCH FASE 2: decide se foi tap válido com base em deslocamento e duração
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (!editor || editor.isDestroyed || isEditable) return;
+
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+
+      const deltaX = touch.clientX - touchStartXRef.current;
+      const deltaY = touch.clientY - touchStartYRef.current;
+      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+      const duration = Date.now() - lastPointerDownTimeRef.current;
+
+      // Cancela se o dedo se moveu mais que 10px (scroll/drag) ou levou mais de 500ms (long-press)
+      const TAP_MOVE_THRESHOLD = 10;
+      const TAP_DURATION_MAX = 500;
+      if (distance > TAP_MOVE_THRESHOLD || duration > TAP_DURATION_MAX) return;
+
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      if (target.closest('[data-highlight-popover]')) return;
+
+      const markEl = target.closest('mark');
+      if (markEl && containerRef.current?.contains(markEl)) {
+        try {
+          const textNode = markEl.firstChild || markEl;
+          const pos = editor.view.posAtDOM(textNode, 0);
+          if (pos >= 0 && pos < editor.state.doc.content.size) {
+            const clickedId = markEl.getAttribute('data-id');
+            const currentActiveId = editor.getAttributes('customHighlight').id;
+            const currentSel = editor.state.selection;
+
+            const isSameMark =
+              isPopoverOpenRef.current &&
+              ((clickedId && currentActiveId && clickedId === currentActiveId) ||
+                (!clickedId && !currentActiveId && pos >= currentSel.from - 2 && pos <= currentSel.to + 2 && editor.isActive('customHighlight')));
+
+            if (isSameMark) {
+              setPopoverOpen(false);
+              editor.commands.setTextSelection(pos);
+              window.getSelection()?.removeAllRanges();
+              return;
+            }
+
+            setPopoverOpen(true);
+            editor.commands.setTextSelection(pos + 1);
+            return;
+          }
+        } catch {
+          // fallback
+        }
+      }
+
+      if (isPopoverOpenRef.current) {
+        setPopoverOpen(false);
+        window.getSelection()?.removeAllRanges();
+      }
+    };
+
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd);
     return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchend', handleTouchEnd);
     };
   }, [editor, isEditable, setPopoverOpen]);
 
@@ -493,6 +556,9 @@ export const TiptapEditor: React.FC = () => {
   const handleSelectColor = (color: HighlightColor) => {
     if (!editor) return;
     
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setPopoverOpen(false);
+
     const attrs = editor.getAttributes('customHighlight');
     const existingId = attrs.id;
     
@@ -538,10 +604,6 @@ export const TiptapEditor: React.FC = () => {
       editor.chain().setCustomHighlight({ color, id: newId }).run();
     }
     
-    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-    
-    setPopoverOpen(false);
-
     // Clear selection away from highlight so popover closes cleanly without scanning doc
     editor.commands.setTextSelection(editor.state.selection.to);
     window.getSelection()?.removeAllRanges();
