@@ -452,7 +452,7 @@ export async function loadRecentDocumentWithCloudSync(
     ]);
 
     const doc: DocumentState = {
-      title: item.title,
+      title: metadata?.name || item.title,
       content: freshestContent,
       oneDriveItemId: item.oneDriveItemId,
       lastSavedAt: new Date().toLocaleTimeString(),
@@ -462,6 +462,7 @@ export async function loadRecentDocumentWithCloudSync(
       draftRevision: 0,
       docId: `doc-${Date.now()}`,
       cloudLastModified: metadata?.lastModifiedDateTime || item.cloudLastModified || null,
+      cloudETag: metadata?.eTag || null,
     };
 
     // Atualiza cache individual e ordem de abertura

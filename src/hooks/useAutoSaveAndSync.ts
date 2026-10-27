@@ -144,7 +144,15 @@ export function useAutoSaveAndSync() {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [currentDoc?.content, currentDoc?.isDirty, currentDoc?.oneDriveItemId, fileHandle, currentDoc?.fileHandle]);
+  }, [
+    currentDoc?.content,
+    currentDoc?.title,
+    currentDoc?.revision,
+    currentDoc?.isDirty,
+    currentDoc?.oneDriveItemId,
+    fileHandle,
+    currentDoc?.fileHandle,
+  ]);
 
   // 3. Gatilhos Imediatos: Perda de Foco, Aba Oculta, Voltar Online
   useEffect(() => {
@@ -231,7 +239,10 @@ export function useAutoSaveAndSync() {
 
             const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+            const updatedTitle = metadata.name || doc.title;
+
             setDocument({
+              title: updatedTitle,
               content: freshContent,
               cloudLastModified: cloudModified,
               cloudETag: cloudETag || null,
@@ -242,6 +253,7 @@ export function useAutoSaveAndSync() {
 
             await saveRecentDocument({
               ...doc,
+              title: updatedTitle,
               content: freshContent,
               cloudLastModified: cloudModified,
               cloudETag: cloudETag || null,

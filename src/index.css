@@ -9,7 +9,13 @@
     --editor-font: 'Inter', sans-serif;
     --editor-size: 16px;
     --editor-width: 80ch;
-    --header-height: 4.5rem; /* ~72px: Linha 1 (~44px) + Linha 2 (~28px) */
+    --header-height: calc(4.875rem + env(safe-area-inset-top, 0px)); /* ~78px: Linha 1 (44px) + Linha 2 (32px) + bordas */
+  }
+
+  @media (max-width: 639px) {
+    :root {
+      --header-height: calc(4.375rem + env(safe-area-inset-top, 0px)); /* ~70px: Linha 1 (40px) + Linha 2 (28px) + bordas */
+    }
   }
 
   .dark {

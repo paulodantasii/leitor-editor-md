@@ -294,7 +294,10 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor 
   };
 
   return (
-    <div className="sticky top-[calc(var(--header-height,4.5rem)+env(safe-area-inset-top,0px))] z-20 my-3 flex justify-center w-full animate-in fade-in slide-in-from-top-3 duration-200 print:hidden">
+    <div
+      style={{ top: 'calc(var(--header-height, 4.875rem) + 12px)' }}
+      className="sticky z-20 my-3 flex justify-center w-full animate-in fade-in slide-in-from-top-3 duration-200 print:hidden"
+    >
       <div className="bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700/80 shadow-lg rounded-2xl p-1.5 flex flex-wrap items-center justify-center gap-1 max-w-full">
         {/* Formatting Marks: Bold, Italic, Underline, Strike, Highlighter */}
         <div className="flex items-center gap-0.5 pr-1.5 border-r border-slate-200 dark:border-slate-700">

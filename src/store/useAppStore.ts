@@ -29,6 +29,7 @@ import {
 import { isBlankUntitledDocument } from '../services/documentUtils';
 import { flushPendingEditorContent } from '../services/editorContentBridge';
 import { SAMPLE_LEGISLATION_DOC } from '../components/sampleDocs';
+import { renameOneDriveFile } from '../services/oneDriveService';
 
 interface AppState {
   // Preferences
@@ -97,6 +98,8 @@ interface AppState {
   setIsSettingsModalOpen: (open: boolean) => void;
   isRecentModalOpen: boolean;
   setIsRecentModalOpen: (open: boolean) => void;
+  isInstallModalOpen: boolean;
+  setIsInstallModalOpen: (open: boolean) => void;
 }
 
 const initialPreferences = loadUserPreferences();
@@ -522,12 +525,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     const state = get();
+    const targetTab = state.tabs.find((t) => t.id === tabId);
+    if (targetTab && targetTab.title === finalTitle) {
+      return;
+    }
+
     const isActive = state.activeTabId === tabId;
     const currentDoc = state.document;
 
     const nextTabs = state.tabs.map((t) => {
       if (t.id === tabId) {
-        const snap = t.snapshot ? { ...t.snapshot, title: finalTitle, isDirty: true } : undefined;
+        const nextRev = (t.snapshot?.revision ?? 0) + 1;
+        const snap = t.snapshot
+          ? { ...t.snapshot, title: finalTitle, isDirty: true, revision: nextRev }
+          : undefined;
         return {
           ...t,
           title: finalTitle,
@@ -549,14 +560,72 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (newHandle && newHandle.name !== finalTitle) {
         newHandle = null;
       }
+      const syncedTabs = nextTabs.map((t) =>
+        t.id === tabId ? { ...t, snapshot: updatedDoc, fileHandle: newHandle } : t
+      );
       set({
-        tabs: nextTabs,
+        tabs: syncedTabs,
         document: updatedDoc,
         fileHandle: newHandle,
       });
       saveLocalDocument(updatedDoc);
+      saveRecentDocument(updatedDoc)
+        .then((list) => set({ recentDocuments: list }))
+        .catch(() => {});
     } else {
       set({ tabs: nextTabs });
+
+      // Se renomeou uma aba em segundo plano conectada ao OneDrive e está online, sincroniza o nome no OneDrive
+      if (
+        targetTab?.oneDriveItemId &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine &&
+        typeof renameOneDriveFile === 'function'
+      ) {
+        renameOneDriveFile(targetTab.oneDriveItemId, finalTitle)
+          .then(async (renamedItem) => {
+            const resolvedName = renamedItem.name || finalTitle;
+            const currentTabs = get().tabs.map((t) => {
+              if (t.id !== tabId) return t;
+              const snapRev = t.snapshot?.revision ?? 1;
+              const updatedSnap = t.snapshot
+                ? {
+                    ...t.snapshot,
+                    title: resolvedName,
+                    isDirty: false,
+                    sourceRevision: snapRev,
+                    cloudLastModified: renamedItem.lastModifiedDateTime,
+                    cloudETag: renamedItem.eTag || null,
+                  }
+                : undefined;
+              return {
+                ...t,
+                title: resolvedName,
+                isDirty: false,
+                snapshot: updatedSnap,
+              };
+            });
+            set({ tabs: currentTabs });
+            saveOpenTabsSession({
+              activeTabId: get().activeTabId,
+              tabs: currentTabs.map((t) => ({
+                id: t.id,
+                title: t.title,
+                docId: t.docId,
+                oneDriveItemId: t.oneDriveItemId || null,
+                isDirty: t.isDirty,
+              })),
+            });
+            const savedSnap = currentTabs.find((t) => t.id === tabId)?.snapshot;
+            if (savedSnap) {
+              const list = await saveRecentDocument(savedSnap);
+              set({ recentDocuments: list });
+            }
+          })
+          .catch(() => {
+            // Se falhar, permanece com isDirty: true para sincronizar quando a aba for focada
+          });
+      }
     }
 
     saveOpenTabsSession({
@@ -918,4 +987,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setIsSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
   isRecentModalOpen: false,
   setIsRecentModalOpen: (open) => set({ isRecentModalOpen: open }),
+  isInstallModalOpen: false,
+  setIsInstallModalOpen: (open) => set({ isInstallModalOpen: open }),
 }));

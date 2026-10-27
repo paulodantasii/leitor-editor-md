@@ -20,20 +20,16 @@ import {
   WifiOff,
   FilePlus,
   Pencil,
-  RotateCw,
   History,
   X,
   Plus,
 } from 'lucide-react';
-import { forceAppUpdate } from '../../services/appUpdateService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveActiveDocument } from '../../services/documentSaveService';
-import { CloseDraftModal } from '../modals/CloseDraftModal';
-import { CloseErrorConflictModal } from '../modals/CloseErrorConflictModal';
 import { SaveDestinationModal } from '../modals/SaveDestinationModal';
-import { isBlankUntitledDocument } from '../../services/documentUtils';
 import { saveCoordinator } from '../../services/saveCoordinator';
 import { TabItem } from '../../types';
+import { usePwaInstall } from '../../hooks/usePwaInstall';
 
 export const Header: React.FC = () => {
   const hasDocument = useAppStore((state) => Boolean(state.document));
@@ -69,13 +65,13 @@ export const Header: React.FC = () => {
     userProfile,
     setIsOneDriveModalOpen,
     createNewDocument,
-    closeDocument,
     recentDocuments,
     setIsRecentModalOpen,
     isSaveDestinationModalOpen,
     setIsSaveDestinationModalOpen,
     cloudConflict,
     syncNotification,
+    setIsInstallModalOpen,
   } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
@@ -96,24 +92,52 @@ export const Header: React.FC = () => {
       userProfile: state.userProfile,
       setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
       createNewDocument: state.createNewDocument,
-      closeDocument: state.closeDocument,
       recentDocuments: state.recentDocuments,
       setIsRecentModalOpen: state.setIsRecentModalOpen,
       isSaveDestinationModalOpen: state.isSaveDestinationModalOpen,
       setIsSaveDestinationModalOpen: state.setIsSaveDestinationModalOpen,
       cloudConflict: state.cloudConflict,
       syncNotification: state.syncNotification,
+      setIsInstallModalOpen: state.setIsInstallModalOpen,
     }))
   );
 
+  const { isStandalone } = usePwaInstall();
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Mantém a variável CSS --header-height sincronizada com a altura real do cabeçalho
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      if (headerRef.current) {
+        const height = headerRef.current.offsetHeight;
+        if (height > 0) {
+          document.documentElement.style.setProperty('--header-height', `${height}px`);
+        }
+      }
+    };
+
+    updateHeaderHeight();
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && headerRef.current) {
+      ro = new ResizeObserver(updateHeaderHeight);
+      ro.observe(headerRef.current);
+    }
+
+    window.addEventListener('resize', updateHeaderHeight);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', updateHeaderHeight);
+    };
+  }, [tabs.length]);
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  const [isCloseDraftModalOpen, setIsCloseDraftModalOpen] = useState(false);
-  const [closeErrorConflict, setCloseErrorConflict] = useState<{ message: string } | null>(null);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
 
@@ -121,6 +145,7 @@ export const Header: React.FC = () => {
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const tabRenameInputRef = useRef<HTMLInputElement>(null);
+  const isCancelingRenameRef = useRef(false);
 
   // Tab context menu state
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
@@ -173,25 +198,45 @@ export const Header: React.FC = () => {
 
   // Inline tab rename triggers
   const handleStartTabRename = (tab: TabItem) => {
+    isCancelingRenameRef.current = false;
     setEditingTabId(tab.id);
     setEditingTitle(tab.title);
     setTimeout(() => {
-      if (tabRenameInputRef.current) {
-        tabRenameInputRef.current.focus();
+      const inputEl = tabRenameInputRef.current;
+      if (inputEl) {
+        inputEl.focus();
         const dotIndex = tab.title.lastIndexOf('.');
         if (dotIndex > 0) {
-          tabRenameInputRef.current.setSelectionRange(0, dotIndex);
+          inputEl.setSelectionRange(0, dotIndex);
         } else {
-          tabRenameInputRef.current.select();
+          inputEl.select();
         }
+        inputEl.scrollLeft = 0;
+        inputEl.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       }
     }, 30);
   };
 
   const handleFinishTabRename = () => {
+    if (isCancelingRenameRef.current) {
+      isCancelingRenameRef.current = false;
+      return;
+    }
     if (editingTabId) {
-      renameTab(editingTabId, editingTitle);
+      const targetTabId = editingTabId;
+      const prevTitle = tabs.find((t) => t.id === targetTabId)?.title;
       setEditingTabId(null);
+      renameTab(targetTabId, editingTitle);
+
+      // Se renomeou a aba ativa conectada ao OneDrive, dispara salvamento imediato para atualizar o nome na nuvem
+      const freshState = useAppStore.getState();
+      if (
+        targetTabId === freshState.activeTabId &&
+        freshState.document?.oneDriveItemId &&
+        freshState.document.title !== prevTitle
+      ) {
+        saveCoordinator.save({ interactive: false });
+      }
     }
   };
 
@@ -201,6 +246,7 @@ export const Header: React.FC = () => {
       handleFinishTabRename();
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      isCancelingRenameRef.current = true;
       setEditingTabId(null);
     }
   };
@@ -294,64 +340,6 @@ export const Header: React.FC = () => {
     setTabToCloseId(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
-    }
-  };
-
-  // Fluxo Salvar e Fechar ativo
-  const handleSaveAndCloseActive = async () => {
-    const state = useAppStore.getState();
-    const doc = state.document;
-    if (!doc || !state.activeTabId) {
-      closeDocument();
-      return;
-    }
-
-    if (isBlankUntitledDocument(doc) && (!doc.content || doc.content.trim() === '')) {
-      closeDocument();
-      return;
-    }
-
-    flushPendingEditorContent();
-    const freshDoc = useAppStore.getState().document;
-    if (!freshDoc) {
-      closeDocument();
-      return;
-    }
-
-    const hasSource = Boolean(freshDoc.oneDriveItemId || fileHandle || freshDoc.fileHandle);
-
-    if (hasSource) {
-      const result = await saveCoordinator.save({ interactive: false });
-      if (result.status === 'ok') {
-        closeDocument();
-        showNotification('Documento salvo e fechado');
-      } else {
-        setCloseErrorConflict({
-          message: result.message || 'Falha de conexão ou erro no servidor',
-        });
-      }
-    } else {
-      setIsCloseDraftModalOpen(true);
-    }
-  };
-
-  const handleCloseActiveWithoutSaving = () => {
-    const doc = useAppStore.getState().document;
-    if (!doc) {
-      closeDocument();
-      return;
-    }
-
-    if (isBlankUntitledDocument(doc) && (!doc.content || doc.content.trim() === '')) {
-      closeDocument();
-      return;
-    }
-
-    if (doc.isDirty && activeTabId) {
-      setTabToCloseId(activeTabId);
-      setUnsavedModalAction('close');
-    } else {
-      closeDocument();
     }
   };
 
@@ -572,7 +560,10 @@ export const Header: React.FC = () => {
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   return (
-    <header className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 header-safe-area transition-colors print:hidden shadow-xs">
+    <header
+      ref={headerRef}
+      className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 header-safe-area transition-colors print:hidden shadow-xs"
+    >
       {/* LINHA 1: Ações Principais e Indicadores de Status */}
       <div className="h-10 sm:h-11 px-3 sm:px-4 flex items-center justify-between gap-2 sm:gap-4 max-w-7xl mx-auto">
         {/* Esquerda / Centro-Esquerda: Status de salvamento e feedback inline */}
@@ -791,6 +782,18 @@ export const Header: React.FC = () => {
             {syncStatus === 'offline-pending' && <WifiOff className="w-3.5 h-3.5 text-amber-500" />}
           </button>
 
+          {/* Botão Instalar App (PWA) */}
+          {!isStandalone && (
+            <button
+              onClick={() => setIsInstallModalOpen(true)}
+              title="Instalar aplicativo no Windows ou iPad"
+              className="px-2.5 sm:px-3 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/80 hover:bg-blue-100 dark:hover:bg-blue-900/60 flex items-center gap-1.5 text-xs font-semibold transition-all shrink-0 cursor-pointer shadow-2xs"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Instalar App</span>
+            </button>
+          )}
+
           {/* Mobile Overflow Menu */}
           <div className="relative lg:hidden shrink-0" ref={mobileMenuRef}>
             <button
@@ -856,30 +859,6 @@ export const Header: React.FC = () => {
 
                     <div className="pt-1.5 border-t border-slate-100 dark:border-slate-700/60 mt-1 space-y-1">
                       <div className="px-2 py-0.5 text-[10px] font-bold uppercase text-slate-400 dark:text-slate-400 tracking-wider">
-                        Aba Ativa
-                      </div>
-                      <button
-                        onClick={() => {
-                          setIsMobileMenuOpen(false);
-                          handleSaveAndCloseActive();
-                        }}
-                        className="w-full p-2 text-left text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg flex items-center gap-2 font-semibold cursor-pointer"
-                      >
-                        <Save className="w-4 h-4" /> Salvar e Fechar
-                      </button>
-                      <button
-                        onClick={() => {
-                          setIsMobileMenuOpen(false);
-                          handleCloseActiveWithoutSaving();
-                        }}
-                        className="w-full p-2 text-left text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg flex items-center gap-2 cursor-pointer"
-                      >
-                        <X className="w-4 h-4" /> Fechar sem salvar
-                      </button>
-                    </div>
-
-                    <div className="pt-1.5 border-t border-slate-100 dark:border-slate-700/60 mt-1 space-y-1">
-                      <div className="px-2 py-0.5 text-[10px] font-bold uppercase text-slate-400 dark:text-slate-400 tracking-wider">
                         Exportar
                       </div>
                       <button
@@ -904,17 +883,20 @@ export const Header: React.FC = () => {
                   </>
                 )}
 
-                <div className="pt-1.5 border-t border-slate-100 dark:border-slate-700/60 mt-1">
-                  <button
-                    onClick={() => {
-                      setIsMobileMenuOpen(false);
-                      forceAppUpdate();
-                    }}
-                    className="w-full p-2 text-left text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
-                  >
-                    <RotateCw className="w-4 h-4 text-blue-500" /> Recarregar App
-                  </button>
-                </div>
+
+                {!isStandalone && (
+                  <div className="pt-1 mt-1 border-t border-slate-100 dark:border-slate-700">
+                    <button
+                      onClick={() => {
+                        setIsInstallModalOpen(true);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="w-full p-2 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50/60 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-lg flex items-center gap-2 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4 text-blue-500" /> Instalar Aplicativo
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -937,11 +919,13 @@ export const Header: React.FC = () => {
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    handleStartTabRename(tab);
+                    if (!isEditing) {
+                      handleStartTabRename(tab);
+                    }
                   }}
                   onContextMenu={(e) => handleOpenTabContextMenu(e, tab)}
                   className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
-                    isActive
+                    isActive || isEditing
                       ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
                   }`}
@@ -955,18 +939,28 @@ export const Header: React.FC = () => {
                     />
                   )}
 
-                  {/* Nome da aba ou input inline de renomeação */}
+                  {/* Nome da aba ou input inline de renomeação com expansão automática */}
                   {isEditing ? (
-                    <input
-                      ref={tabRenameInputRef}
-                      type="text"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      onBlur={handleFinishTabRename}
-                      onKeyDown={handleTabRenameKeyDown}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1 py-0 outline-none w-28 sm:w-36 shadow-xs"
-                    />
+                    <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">
+                      <span
+                        aria-hidden="true"
+                        className="invisible col-start-1 row-start-1 whitespace-pre text-[11px] sm:text-xs font-semibold px-1.5 py-0 border border-transparent pointer-events-none select-none overflow-hidden"
+                      >
+                        {`${editingTitle || ' '}\u00A0\u00A0`}
+                      </span>
+                      <input
+                        ref={tabRenameInputRef}
+                        type="text"
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onBlur={handleFinishTabRename}
+                        onKeyDown={handleTabRenameKeyDown}
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                        aria-label="Renomear arquivo"
+                        className="col-start-1 row-start-1 w-full min-w-0 select-text text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0 outline-none shadow-xs"
+                      />
+                    </div>
                   ) : (
                     <span className="text-[11px] sm:text-xs truncate max-w-[120px] sm:max-w-[180px] md:max-w-[240px]">
                       {tab.title}
@@ -977,6 +971,7 @@ export const Header: React.FC = () => {
                   <button
                     type="button"
                     onClick={(e) => handleCloseTabClick(e, tab)}
+                    onDoubleClick={(e) => e.stopPropagation()}
                     className="w-3.5 h-3.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
                     title={tab.isDirty ? 'Fechar aba (alterações não salvas)' : 'Fechar aba'}
                   >
@@ -1066,50 +1061,6 @@ export const Header: React.FC = () => {
           if (res.status === 'ok') {
             showNotification(res.message || 'Arquivo salvo!');
           }
-        }}
-      />
-
-      {/* Modal de fechamento de rascunho sem fonte permanente */}
-      <CloseDraftModal
-        isOpen={isCloseDraftModalOpen}
-        onClose={() => setIsCloseDraftModalOpen(false)}
-        documentTitle={activeTab?.title || currentDoc.title}
-        onSaveToOneDrive={() => {
-          setIsCloseDraftModalOpen(false);
-          setIsOneDriveModalOpen(true, 'save_as', 'close');
-        }}
-        onSaveToLocal={async () => {
-          setIsCloseDraftModalOpen(false);
-          const res = await saveCoordinator.save({ interactive: true });
-          if (res.status === 'ok') {
-            closeDocument();
-            showNotification('Documento salvo e fechado');
-          }
-        }}
-        onKeepAsDraft={async () => {
-          setIsCloseDraftModalOpen(false);
-          await saveCoordinator.saveDraft();
-          closeDocument();
-          showNotification('Rascunho mantido no histórico');
-        }}
-      />
-
-      {/* Modal de erro/conflito ao fechar */}
-      <CloseErrorConflictModal
-        isOpen={closeErrorConflict !== null}
-        message={closeErrorConflict?.message || ''}
-        onRetry={() => {
-          setCloseErrorConflict(null);
-          handleSaveAndCloseActive();
-        }}
-        onCloseAndKeepPending={async () => {
-          setCloseErrorConflict(null);
-          await saveCoordinator.saveDraft();
-          closeDocument();
-          showNotification('Rascunho mantido pendente para envio');
-        }}
-        onCancel={() => {
-          setCloseErrorConflict(null);
         }}
       />
     </header>

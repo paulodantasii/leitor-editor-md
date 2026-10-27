@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Header } from './components/layout/Header';
 import { TiptapEditor } from './components/editor/TiptapEditor';
 import { OneDriveModal } from './components/modals/OneDriveModal';
 import { SettingsModal } from './components/modals/SettingsModal';
-import { WelcomeScreen } from './components/modals/WelcomeScreen';
 import { RecentDocumentsModal } from './components/modals/RecentDocumentsModal';
 import { CloudConflictModal } from './components/modals/CloudConflictModal';
+import { InstallAppModal } from './components/modals/InstallAppModal';
 import { SyncNotificationToast } from './components/layout/SyncNotificationToast';
 import { useAppStore } from './store/useAppStore';
 
@@ -13,6 +13,7 @@ import { ReadingProgress } from './components/layout/ReadingProgress';
 import { useAutoSaveAndSync } from './hooks/useAutoSaveAndSync';
 import { getActiveAccount } from './services/msalService';
 import { saveActiveDocument } from './services/documentSaveService';
+import { initAutoUpdateListeners } from './services/appUpdateService';
 
 import { HomeScreen } from './components/home/HomeScreen';
 
@@ -20,7 +21,6 @@ export const App: React.FC = () => {
   const theme = useAppStore((state) => state.preferences.theme);
   const docTitle = useAppStore((state) => state.document?.title);
   const hasDocument = useAppStore((state) => Boolean(state.document));
-  const loadCachedDocument = useAppStore((state) => state.loadCachedDocument);
   const toggleHighlightMode = useAppStore((state) => state.toggleHighlightMode);
   const setUserProfile = useAppStore((state) => state.setUserProfile);
   const setSyncNotification = useAppStore((state) => state.setSyncNotification);
@@ -49,12 +49,6 @@ export const App: React.FC = () => {
     const cleanTitle = docTitle ? docTitle.replace(/\.(md|markdown|txt)$/i, '').trim() : '';
     document.title = cleanTitle ? `${cleanTitle} - Leitor & Editor MD` : 'Leitor & Editor Markdown PWA';
   }, [docTitle]);
-
-  // Show Welcome screen if opening browser from scratch (sessionStorage empty)
-  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
-    const hasSession = sessionStorage.getItem('has_active_session');
-    return !hasSession;
-  });
 
   // Global Keyboard Shortcuts (Press 'G' to toggle Highlight mode)
   useEffect(() => {
@@ -110,15 +104,9 @@ export const App: React.FC = () => {
     };
   }, [toggleHighlightMode, setSyncNotification]);
 
-  // Register PWA Service Worker
+  // Register PWA Service Worker & Zero-Stale Auto-Update Listeners
   useEffect(() => {
-    if ('serviceWorker' in navigator && import.meta.env.PROD) {
-      const swUrl = `${import.meta.env.BASE_URL}sw.js`;
-      navigator.serviceWorker
-        .register(swUrl)
-        .then((reg) => console.log('Service Worker registrado com sucesso:', reg.scope))
-        .catch((err) => console.warn('Falha no registro do Service Worker:', err));
-    }
+    return initAutoUpdateListeners();
   }, []);
 
   // Sync theme class on document element & meta theme-color
@@ -133,17 +121,6 @@ export const App: React.FC = () => {
     }
   }, [theme]);
 
-  const handleContinueLast = () => {
-    sessionStorage.setItem('has_active_session', 'true');
-    loadCachedDocument();
-    setShowWelcome(false);
-  };
-
-  const handleOpenNew = () => {
-    sessionStorage.setItem('has_active_session', 'true');
-    setShowWelcome(false);
-  };
-
   return (
     <div
       className="min-h-screen flex flex-col transition-colors print:bg-transparent print:text-slate-900"
@@ -155,19 +132,12 @@ export const App: React.FC = () => {
         {hasDocument ? <TiptapEditor /> : <HomeScreen />}
       </main>
 
-      {/* Startup Choice Modal (shown when browser opens from scratch with a document open) */}
-      {showWelcome && hasDocument && (
-        <WelcomeScreen
-          onContinueLast={handleContinueLast}
-          onOpenNew={handleOpenNew}
-        />
-      )}
-
       <ReadingProgress />
       <OneDriveModal />
       <SettingsModal />
       <RecentDocumentsModal />
       <CloudConflictModal />
+      <InstallAppModal />
       <SyncNotificationToast />
     </div>
   );

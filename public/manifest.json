@@ -1,22 +1,43 @@
 {
   "name": "Leitor & Editor Markdown",
-  "short_name": "LeitorMD",
+  "short_name": "Leitor MD",
   "description": "Leitor, Marcador e Editor de documentos Markdown com suporte ao OneDrive.",
   "start_url": "/leitor-editor-md/",
   "scope": "/leitor-editor-md/",
   "id": "/leitor-editor-md/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0f172a",
   "theme_color": "#3b82f6",
+  "categories": ["productivity", "utilities", "education"],
   "icons": [
     {
       "src": "icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "icon-512.png",
       "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
       "type": "image/png"
     }
   ]

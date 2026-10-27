@@ -1,5 +1,5 @@
 import { useAppStore } from '../store/useAppStore';
-import { saveOneDriveFile, downloadOneDriveFile } from './oneDriveService';
+import { saveOneDriveFile, downloadOneDriveFile, renameOneDriveFile } from './oneDriveService';
 import { flushPendingEditorContent } from './editorContentBridge';
 import { downloadMarkdownFile } from './exportService';
 import { saveRecentDocument } from './recentDocumentsService';
@@ -144,6 +144,7 @@ class SaveCoordinator {
     const docIdAtStart = doc.docId;
     const revisionAtStart = doc.revision ?? 0;
     const contentToSave = doc.content;
+    const titleToSave = doc.title;
     const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     // Destino 1: OneDrive
@@ -158,13 +159,27 @@ class SaveCoordinator {
 
       state.setSyncStatus('saving');
       try {
-        const updatedItem = await saveOneDriveFile(doc.oneDriveItemId, contentToSave, doc.cloudETag);
+        let updatedItem = await saveOneDriveFile(doc.oneDriveItemId, contentToSave, doc.cloudETag);
 
-        // Verifica se o usuário não trocou de documento enquanto o PUT viajava
+        // Se o título local foi alterado (ex.: renomeado pela barra de abas), sincroniza o nome no OneDrive via PATCH
+        if (
+          titleToSave &&
+          updatedItem.name &&
+          updatedItem.name !== titleToSave &&
+          typeof renameOneDriveFile === 'function'
+        ) {
+          updatedItem = await renameOneDriveFile(doc.oneDriveItemId, titleToSave);
+        }
+
+        // Verifica se o usuário não trocou de documento enquanto o PUT/PATCH viajava
         const latest = useAppStore.getState().document;
         if (latest && latest.docId === docIdAtStart) {
           const isStillDirty = (latest.revision ?? 0) > revisionAtStart;
+          const resolvedTitle =
+            updatedItem.name && latest.title === titleToSave ? updatedItem.name : latest.title;
+
           useAppStore.getState().setDocument({
+            title: resolvedTitle,
             sourceRevision: revisionAtStart,
             draftRevision: Math.max(latest.draftRevision ?? 0, revisionAtStart),
             isDirty: isStillDirty,
@@ -176,7 +191,8 @@ class SaveCoordinator {
 
           const afterUpdate = useAppStore.getState().document;
           if (afterUpdate) {
-            await saveRecentDocument({ ...afterUpdate });
+            const updatedList = await saveRecentDocument({ ...afterUpdate });
+            useAppStore.setState({ recentDocuments: updatedList });
           }
         }
 

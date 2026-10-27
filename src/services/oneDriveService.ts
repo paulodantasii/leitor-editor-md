@@ -204,3 +204,47 @@ export async function createOneDriveFile(
   throw new Error('Não foi possível gerar um nome de arquivo exclusivo no OneDrive.');
 }
 
+/**
+ * Renomeia um arquivo existente no OneDrive via Microsoft Graph API (PATCH /me/drive/items/{fileId}).
+ * Caso ocorra conflito de nome na mesma pasta (HTTP 409), tenta automaticamente sufixos (1), (2)...
+ */
+export async function renameOneDriveFile(
+  fileId: string,
+  desiredFileName: string
+): Promise<OneDriveItem> {
+  const token = await getAccessToken();
+
+  let candidateName = normalizeMarkdownFileName(desiredFileName);
+  const match = candidateName.match(/^(.*?)(?: \((\d+)\))?(\.[^.]*)?$/);
+  const base = match && match[1] ? match[1] : candidateName;
+  let currentNum = match && match[2] ? parseInt(match[2], 10) : 0;
+  const ext = match && match[3] ? match[3] : '.md';
+
+  const maxRetries = 15;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${fileId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: candidateName }),
+    });
+
+    if (response.ok) {
+      return await response.json();
+    }
+
+    if (response.status === 409) {
+      currentNum = currentNum > 0 ? currentNum + 1 : 1;
+      candidateName = `${base} (${currentNum})${ext}`;
+      continue;
+    }
+
+    throw new Error(`Falha ao renomear arquivo no OneDrive: ${response.statusText}`);
+  }
+
+  throw new Error('Não foi possível renomear o arquivo no OneDrive após múltiplas tentativas.');
+}
+
+

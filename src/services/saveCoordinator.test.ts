@@ -8,6 +8,7 @@ vi.mock('./oneDriveService', () => ({
   saveOneDriveFile: vi.fn(),
   downloadOneDriveFile: vi.fn(),
   getOneDriveItemMetadata: vi.fn(),
+  renameOneDriveFile: vi.fn(),
 }));
 
 vi.mock('./recentDocumentsService', () => ({
@@ -258,5 +259,50 @@ describe('saveCoordinator (Fase 1)', () => {
     const conflict = useAppStore.getState().cloudConflict;
     expect(conflict).not.toBeNull();
     expect(conflict?.cloudContent).toBe('# Mudou no bloco de notas');
+  });
+
+  it('renomeia o arquivo no OneDrive via renameOneDriveFile quando o título local mudou em relação ao nome na nuvem', async () => {
+    useAppStore.setState({
+      document: {
+        title: 'Nome Novo Pela Aba.md',
+        content: '# Conteúdo 1',
+        oneDriveItemId: 'drive-item-123',
+        lastSavedAt: null,
+        isDirty: true,
+        revision: 2,
+        draftRevision: 1,
+        sourceRevision: 1,
+        docId: 'doc-test-rename',
+      },
+      fileHandle: null,
+      syncStatus: 'idle',
+    });
+
+    // PUT /content retorna o nome antigo que ainda estava no OneDrive
+    vi.mocked(oneDriveService.saveOneDriveFile).mockResolvedValueOnce({
+      id: 'drive-item-123',
+      name: 'Nome Antigo.md',
+      lastModifiedDateTime: '2026-10-21T12:00:00Z',
+      eTag: 'W/"etag-1"',
+    });
+
+    // PATCH /items/{id} aplica o novo nome e retorna o novo eTag
+    vi.mocked(oneDriveService.renameOneDriveFile).mockResolvedValueOnce({
+      id: 'drive-item-123',
+      name: 'Nome Novo Pela Aba.md',
+      lastModifiedDateTime: '2026-10-21T12:00:02Z',
+      eTag: 'W/"etag-2"',
+    });
+
+    const result = await saveCoordinator.save();
+
+    expect(result.status).toBe('ok');
+    expect(oneDriveService.saveOneDriveFile).toHaveBeenCalledTimes(1);
+    expect(oneDriveService.renameOneDriveFile).toHaveBeenCalledWith('drive-item-123', 'Nome Novo Pela Aba.md');
+
+    const doc = useAppStore.getState().document!;
+    expect(doc.title).toBe('Nome Novo Pela Aba.md');
+    expect(doc.cloudETag).toBe('W/"etag-2"');
+    expect(doc.isDirty).toBe(false);
   });
 });
