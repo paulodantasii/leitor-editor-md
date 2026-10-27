@@ -1,10 +1,7 @@
-name: Deploy to GitHub Pages
+name: Deploy to GitHub Pages (Manual)
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_dispatch: # Manual trigger only (never runs automatically on push/commit)
 
 permissions:
   contents: read
