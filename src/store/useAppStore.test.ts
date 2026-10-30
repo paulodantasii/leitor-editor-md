@@ -257,3 +257,57 @@ describe('Interface com Abas: Ciclo de Vida e Gerenciamento no useAppStore', () 
     expect(useAppStore.getState().document).toBeNull();
   });
 });
+
+describe('Modo Código-Fonte (isSourceMode): Exclusividade Mútua e Ciclo de Vida', () => {
+  beforeEach(() => {
+    useAppStore.getState().closeDocument();
+  });
+
+  it('só permite ativar isSourceMode quando isEditable for true', () => {
+    useAppStore.getState().openTab({
+      title: 'Doc.md',
+      content: '# Teste',
+    });
+
+    // Em modo Leitura (isEditable === false), tentar ativar isSourceMode deve manter false
+    expect(useAppStore.getState().isEditable).toBe(false);
+    useAppStore.getState().setIsSourceMode(true);
+    expect(useAppStore.getState().isSourceMode).toBe(false);
+
+    useAppStore.getState().toggleSourceMode();
+    expect(useAppStore.getState().isSourceMode).toBe(false);
+
+    // Ao entrar em modo Edição (isEditable === true), permite alternar isSourceMode
+    useAppStore.getState().setIsEditable(true);
+    useAppStore.getState().toggleSourceMode();
+    expect(useAppStore.getState().isSourceMode).toBe(true);
+  });
+
+  it('desativa isSourceMode automaticamente ao voltar para Leitura, ativar Grifar ou fechar documento', () => {
+    useAppStore.getState().createNewDocument();
+    expect(useAppStore.getState().isEditable).toBe(true);
+
+    useAppStore.getState().setIsSourceMode(true);
+    expect(useAppStore.getState().isSourceMode).toBe(true);
+
+    // Sair do modo Edição para Leitura desativa isSourceMode
+    useAppStore.getState().setIsEditable(false);
+    expect(useAppStore.getState().isSourceMode).toBe(false);
+
+    // Reativa Edição + Código-Fonte e aciona Modo Grifar
+    useAppStore.getState().setIsEditable(true);
+    useAppStore.getState().setIsSourceMode(true);
+    expect(useAppStore.getState().isSourceMode).toBe(true);
+
+    useAppStore.getState().toggleHighlightMode();
+    expect(useAppStore.getState().isHighlightMode).toBe(true);
+    expect(useAppStore.getState().isEditable).toBe(false);
+    expect(useAppStore.getState().isSourceMode).toBe(false);
+
+    // Reativa Edição + Código-Fonte e fecha o documento
+    useAppStore.getState().setIsEditable(true);
+    useAppStore.getState().setIsSourceMode(true);
+    useAppStore.getState().closeDocument();
+    expect(useAppStore.getState().isSourceMode).toBe(false);
+  });
+});

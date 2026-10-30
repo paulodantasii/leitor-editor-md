@@ -1,4 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  readInstallButtonDismissed,
+  writeInstallButtonDismissed,
+  INSTALL_BUTTON_DISMISSED_KEY,
+} from './usePwaInstall';
 
 describe('usePwaInstall — Gerenciador de Instalação PWA', () => {
   beforeEach(() => {
@@ -62,5 +67,78 @@ describe('usePwaInstall — Gerenciador de Instalação PWA', () => {
 
     expect(promptCalled).toBe(true);
     expect(result.outcome).toBe('accepted');
+  });
+});
+
+describe('usePwaInstall — Persistência de dispensa do botão de instalação', () => {
+  const mockLocalStorage: Record<string, string> = {};
+
+  beforeEach(() => {
+    for (const key of Object.keys(mockLocalStorage)) {
+      delete mockLocalStorage[key];
+    }
+
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => mockLocalStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        mockLocalStorage[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete mockLocalStorage[k];
+      },
+      clear: () => {
+        for (const key of Object.keys(mockLocalStorage)) {
+          delete mockLocalStorage[key];
+        }
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('readInstallButtonDismissed() retorna false sem chave', () => {
+    expect(readInstallButtonDismissed()).toBe(false);
+  });
+
+  it('após writeInstallButtonDismissed(), localStorage.getItem(KEY) === "1" e readInstallButtonDismissed() retorna true', () => {
+    writeInstallButtonDismissed();
+    expect(localStorage.getItem(INSTALL_BUTTON_DISMISSED_KEY)).toBe('1');
+    expect(readInstallButtonDismissed()).toBe(true);
+  });
+
+  it('se localStorage.getItem lança erro, readInstallButtonDismissed() retorna false e não propaga (espiar console.warn)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('Quota or Access Denied');
+      },
+      setItem: vi.fn(),
+    });
+
+    expect(readInstallButtonDismissed()).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Falha ao ler preferência do botão de instalação:',
+      expect.any(Error)
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('se setItem lança erro, writeInstallButtonDismissed() não propaga', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+    });
+
+    expect(() => writeInstallButtonDismissed()).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Falha ao salvar preferência do botão de instalação:',
+      expect.any(Error)
+    );
+    warnSpy.mockRestore();
   });
 });

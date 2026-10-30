@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { downloadMarkdownFile } from '../../services/exportService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { AlertTriangle, Cloud, HardDrive, Download, X } from 'lucide-react';
+import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 
 export const CloudConflictModal: React.FC = () => {
   const {
@@ -67,16 +68,19 @@ export const CloudConflictModal: React.FC = () => {
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
               <AlertTriangle className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
                 Conflito de Versões Detectado
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[260px]">
-                {currentDoc?.title || 'Documento'}
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                <MiddleEllipsisText
+                  text={currentDoc?.title || 'Documento'}
+                  className="max-w-[260px]"
+                />
               </p>
             </div>
           </div>

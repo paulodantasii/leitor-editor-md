@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Save, X, Trash2 } from 'lucide-react';
+import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 
 export type GuardActionType = 'new' | 'open_local' | 'open_onedrive' | 'open_recent' | 'close';
 
@@ -84,16 +85,19 @@ export const UnsavedChangesModal: React.FC<UnsavedChangesModalProps> = ({
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-md p-6 space-y-5 animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">
                 Alterações Não Salvas
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[260px]">
-                {documentTitle || 'Documento sem título'}
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                <MiddleEllipsisText
+                  text={documentTitle || 'Documento sem título'}
+                  className="max-w-[260px]"
+                />
               </p>
             </div>
           </div>

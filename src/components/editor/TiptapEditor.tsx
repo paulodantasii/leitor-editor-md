@@ -29,11 +29,37 @@ import {
 } from '../../services/editorContentBridge';
 import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
 
+/**
+ * Conta grifos (<mark ...>) diretamente no Markdown bruto quando em Modo Código-Fonte.
+ * Agrupa múltiplos <mark> com o mesmo data-id como 1 único grifo, idêntico ao ProseMirror.
+ */
+function countHighlightsInRawMarkdown(markdown: string): number {
+  if (!markdown || !markdown.includes('<mark')) return 0;
+  const uniqueIds = new Set<string>();
+  let unassignedCount = 0;
+  const markTagRegex = /<mark\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = markTagRegex.exec(markdown)) !== null) {
+    const attrs = match[1] || '';
+    const idMatch = attrs.match(/\b(?:data-id|data-hl-id|id)=["']([^"']+)["']/i);
+    if (idMatch && idMatch[1]) {
+      uniqueIds.add(idMatch[1]);
+    } else {
+      unassignedCount++;
+    }
+  }
+
+  return uniqueIds.size + unassignedCount;
+}
+
 export const TiptapEditor: React.FC = () => {
   // Fine-grained selectors: avoids re-rendering TiptapEditor on every content change / sync update
   const docId = useAppStore((state) => state.document?.docId);
   const isHighlightMode = useAppStore((state) => state.isHighlightMode);
   const isEditable = useAppStore((state) => state.isEditable);
+  const isSourceMode = useAppStore((state) => state.isSourceMode);
+  const toggleSourceMode = useAppStore((state) => state.toggleSourceMode);
   const preferences = useAppStore(
     useShallow((state) => ({
       fontSize: state.preferences.fontSize,
@@ -46,6 +72,7 @@ export const TiptapEditor: React.FC = () => {
   const setHighlightCount = useAppStore((state) => state.setHighlightCount);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isMouseDownRef = useRef(false);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastEmittedMarkdownRef = useRef<string | null>(null);
@@ -53,6 +80,13 @@ export const TiptapEditor: React.FC = () => {
   const markdownDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastTypingStartTimeRef = useRef<number | null>(null);
+
+  // Estado e refs do Modo Código-Fonte (Markdown puro)
+  const [rawContent, setRawContent] = useState<string>(() => useAppStore.getState().document?.content || '');
+  const rawContentRef = useRef<string>(rawContent);
+  const isSourceModeRef = useRef<boolean>(isSourceMode);
+  const prevIsSourceModeRef = useRef<boolean>(isSourceMode);
+  const isRawDirtyRef = useRef<boolean>(false);
 
   // State to control popover visibility: only opens on explicit click on a highlight mark
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -242,20 +276,30 @@ export const TiptapEditor: React.FC = () => {
       clearTimeout(markdownDebounceTimerRef.current);
       markdownDebounceTimerRef.current = null;
     }
-    const currentEditor = editorRef.current;
-    if (!currentEditor || currentEditor.isDestroyed) return;
 
     // Skip heavy serialization if there are no pending unsaved changes
     if (!hasPendingBridgeChanges()) {
       return;
     }
 
+    if (isSourceModeRef.current) {
+      const rawMarkdown = rawContentRef.current;
+      lastEmittedMarkdownRef.current = rawMarkdown;
+      markBridgeClean();
+      updateDocumentContent(rawMarkdown);
+      setHighlightCount(countHighlightsInRawMarkdown(rawMarkdown));
+      return;
+    }
+
+    const currentEditor = editorRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return;
+
     const rawMarkdown = currentEditor.storage.markdown.getMarkdown();
     lastEmittedMarkdownRef.current = rawMarkdown;
     markBridgeClean();
     updateDocumentContent(rawMarkdown);
     updateHighlightCount(currentEditor);
-  }, [updateDocumentContent, updateHighlightCount]);
+  }, [updateDocumentContent, updateHighlightCount, setHighlightCount]);
 
   const scheduleDebouncedContent = useCallback(() => {
     markDocumentDirty();
@@ -324,7 +368,7 @@ export const TiptapEditor: React.FC = () => {
     };
   }, [flushContent]);
 
-  // Update content only when document switches externally (docId) or initial mount
+  // Update content when document switches externally (docId) or initial mount
   useEffect(() => {
     if (!editor) return;
 
@@ -333,19 +377,135 @@ export const TiptapEditor: React.FC = () => {
     }
 
     currentLoadedDocIdRef.current = docId;
+    isRawDirtyRef.current = false;
     const currentDoc = useAppStore.getState().document;
+    const nextContent = currentDoc?.content || '';
 
-    if (!currentDoc || !currentDoc.content) {
-      lastEmittedMarkdownRef.current = '';
+    lastEmittedMarkdownRef.current = nextContent;
+    rawContentRef.current = nextContent;
+    setRawContent(nextContent);
+
+    if (!nextContent) {
       editor.commands.clearContent(false);
       updateHighlightCount(editor);
       return;
     }
 
-    lastEmittedMarkdownRef.current = currentDoc.content;
-    editor.commands.setContent(currentDoc.content, false);
+    editor.commands.setContent(nextContent, false);
     updateHighlightCount(editor);
   }, [docId, editor, updateHighlightCount]);
+
+  // Escuta atualizações externas de conteúdo na mesma aba (ex.: resolução de conflito ou sync silencioso do OneDrive)
+  useEffect(() => {
+    const unsubscribe = useAppStore.subscribe((state, prevState) => {
+      const nextDoc = state.document;
+      const prevDoc = prevState.document;
+      if (!nextDoc || !prevDoc) return;
+      if (nextDoc.docId !== prevDoc.docId) return;
+      if (nextDoc.content === prevDoc.content) return;
+      if (nextDoc.content === lastEmittedMarkdownRef.current) return;
+
+      lastEmittedMarkdownRef.current = nextDoc.content;
+      rawContentRef.current = nextDoc.content;
+      isRawDirtyRef.current = false;
+      setRawContent(nextDoc.content);
+
+      const currentEditor = editorRef.current;
+      if (currentEditor && !currentEditor.isDestroyed) {
+        currentEditor.commands.setContent(nextDoc.content, false);
+        updateHighlightCount(currentEditor);
+      }
+    });
+    return unsubscribe;
+  }, [updateHighlightCount]);
+
+  // Gerencia a transição sem perda entre Editor Visual <-> Modo Código-Fonte
+  useEffect(() => {
+    const wasSourceMode = prevIsSourceModeRef.current;
+    prevIsSourceModeRef.current = isSourceMode;
+
+    if (wasSourceMode === isSourceMode) return;
+
+    if (isSourceMode) {
+      // Transição: Visual -> Código-Fonte
+      // Se havia digitação pendente no ProseMirror, força o flush antes de abrir o Código-Fonte
+      if (hasPendingBridgeChanges()) {
+        flushContent();
+      }
+      isSourceModeRef.current = true;
+      isRawDirtyRef.current = false;
+      const latestMarkdown = useAppStore.getState().document?.content ?? '';
+      rawContentRef.current = latestMarkdown;
+      setRawContent(latestMarkdown);
+      setPopoverOpen(false);
+
+      requestAnimationFrame(() => {
+        const el = rawTextareaRef.current;
+        if (el) {
+          const savedScrollY = window.scrollY;
+          el.style.height = 'auto';
+          el.style.height = `${Math.max(el.scrollHeight, 480)}px`;
+          window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+          el.focus({ preventScroll: true });
+        }
+      });
+    } else {
+      // Transição: Código-Fonte -> Visual (ou saída para Modo Leitura / Grifar)
+      if (hasPendingBridgeChanges()) {
+        flushContent();
+      }
+      isSourceModeRef.current = false;
+
+      if (editor && !editor.isDestroyed && isRawDirtyRef.current) {
+        const latestRaw = rawContentRef.current;
+        lastEmittedMarkdownRef.current = latestRaw;
+        editor.commands.setContent(latestRaw, false);
+        updateHighlightCount(editor);
+        isRawDirtyRef.current = false;
+      }
+    }
+  }, [isSourceMode, editor, flushContent, setPopoverOpen, updateHighlightCount]);
+
+  // Ajusta a altura do textarea automaticamente preservando a rolagem da janela
+  useEffect(() => {
+    if (!isSourceMode) return;
+    const el = rawTextareaRef.current;
+    if (!el) return;
+    const savedScrollY = window.scrollY;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(el.scrollHeight, 480)}px`;
+    window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+  }, [rawContent, isSourceMode, preferences.fontSize, preferences.textWidth]);
+
+  // Garante que a impressão/PDF (window.print) a partir do Modo Código-Fonte reflita o texto mais recente no ProseMirror
+  useEffect(() => {
+    const handleBeforePrint = () => {
+      if (isSourceModeRef.current && editor && !editor.isDestroyed) {
+        if (hasPendingBridgeChanges()) {
+          flushContent();
+        }
+        if (isRawDirtyRef.current) {
+          editor.commands.setContent(rawContentRef.current, false);
+          isRawDirtyRef.current = false;
+        }
+      }
+    };
+    window.addEventListener('beforeprint', handleBeforePrint);
+    return () => window.removeEventListener('beforeprint', handleBeforePrint);
+  }, [editor, flushContent]);
+
+  // Atalho de teclado Ctrl+; (ou Cmd+;) para alternar o Modo Código-Fonte quando em Modo Edição
+  useEffect(() => {
+    if (!isEditable) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === ';') {
+        e.preventDefault();
+        toggleSourceMode();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isEditable, toggleSourceMode]);
 
   // Preserva a posição de leitura (scroll) independente por aba.
   // Deve ficar APÓS o efeito de setContent acima (ordem de efeitos do React).
@@ -666,6 +826,37 @@ export const TiptapEditor: React.FC = () => {
     scheduleDebouncedHighlightCount(editor);
   };
 
+  const handleRawTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = e.target.value;
+    rawContentRef.current = nextValue;
+    isRawDirtyRef.current = true;
+    setRawContent(nextValue);
+    scheduleDebouncedContent();
+  };
+
+  const handleRawTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      const target = e.currentTarget;
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      const currentVal = rawContentRef.current;
+      const nextVal = currentVal.substring(0, start) + '  ' + currentVal.substring(end);
+
+      rawContentRef.current = nextVal;
+      isRawDirtyRef.current = true;
+      setRawContent(nextVal);
+      scheduleDebouncedContent();
+
+      requestAnimationFrame(() => {
+        if (rawTextareaRef.current) {
+          rawTextareaRef.current.selectionStart = start + 2;
+          rawTextareaRef.current.selectionEnd = start + 2;
+        }
+      });
+    }
+  };
+
   const getContainerWidthClass = () => {
     switch (preferences.textWidth) {
       case 'narrow': return 'max-w-2xl';
@@ -676,9 +867,17 @@ export const TiptapEditor: React.FC = () => {
     }
   };
 
+  const showSourceEditor = isEditable && isSourceMode;
+
   return (
     <div className="w-full flex flex-col items-center py-4 px-4 sm:px-6 print:p-0 print:m-0 print:w-full">
-      {isEditable && <EditorToolbar editor={editor} />}
+      {isEditable && (
+        <EditorToolbar
+          editor={editor}
+          isSourceMode={isSourceMode}
+          onToggleSourceMode={toggleSourceMode}
+        />
+      )}
 
       <div
         ref={containerRef}
@@ -701,10 +900,36 @@ export const TiptapEditor: React.FC = () => {
             />
           </BubbleMenu>
         )}
+
+        {showSourceEditor && (
+          <div className="bg-white dark:bg-slate-800/90 shadow-sm border border-blue-300 dark:border-blue-700/70 rounded-xl p-4 sm:p-10 min-h-[75vh] max-w-full print:hidden">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100 dark:border-slate-700/60 text-xs text-slate-400 dark:text-slate-500 font-sans select-none">
+              <span className="font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider text-[11px]">
+                Modo Código-Fonte (Markdown Puro)
+              </span>
+              <span className="hidden sm:inline text-[11px]">
+                Edição direta do arquivo .md • Atalho: Ctrl+;
+              </span>
+            </div>
+            <textarea
+              ref={rawTextareaRef}
+              value={rawContent}
+              onChange={handleRawTextareaChange}
+              onKeyDown={handleRawTextareaKeyDown}
+              spellCheck={false}
+              aria-label="Editor de código-fonte Markdown"
+              placeholder="Digite o código Markdown puro aqui..."
+              className="w-full min-h-[65vh] bg-transparent text-slate-800 dark:text-slate-100 font-mono leading-relaxed resize-none outline-none border-none p-0 m-0 overflow-hidden selection:bg-blue-500/20"
+              style={{ fontSize: `${Math.max(13, preferences.fontSize - 1)}px` }}
+            />
+          </div>
+        )}
         
         <EditorContent 
           editor={editor} 
-          className="bg-white dark:bg-slate-800/90 shadow-sm border border-slate-200 dark:border-slate-700/60 rounded-xl p-4 sm:p-10 min-h-[75vh] max-w-full overflow-hidden print:shadow-none print:border-none print:p-0 print:min-h-0 print:bg-transparent print:dark:bg-transparent" 
+          className={`${
+            showSourceEditor ? 'hidden print:block' : ''
+          } bg-white dark:bg-slate-800/90 shadow-sm border border-slate-200 dark:border-slate-700/60 rounded-xl p-4 sm:p-10 min-h-[75vh] max-w-full overflow-hidden print:shadow-none print:border-none print:p-0 print:min-h-0 print:bg-transparent print:dark:bg-transparent`} 
         />
       </div>
     </div>

@@ -17,6 +17,29 @@ function notifyListeners() {
   listeners.forEach((listener) => listener());
 }
 
+export const INSTALL_BUTTON_DISMISSED_KEY = 'leitor_md_install_button_dismissed';
+
+export function readInstallButtonDismissed(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(INSTALL_BUTTON_DISMISSED_KEY) === '1';
+  } catch (err) {
+    console.warn('Falha ao ler preferência do botão de instalação:', err);
+    return false;
+  }
+}
+
+export function writeInstallButtonDismissed(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(INSTALL_BUTTON_DISMISSED_KEY, '1');
+    }
+  } catch (err) {
+    console.warn('Falha ao salvar preferência do botão de instalação:', err);
+  }
+}
+
+let globalButtonDismissed = readInstallButtonDismissed();
+
 // Setup global listener immediately if running in browser
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeinstallprompt', (e: Event) => {
@@ -63,11 +86,13 @@ export function usePwaInstall() {
   const [hasPrompt, setHasPrompt] = useState<boolean>(() => globalDeferredPrompt !== null);
   const [isStandalone, setIsStandalone] = useState<boolean>(checkIsStandalone);
   const [platform] = useState<DetectedPlatform>(detectPlatform);
+  const [isButtonDismissed, setIsButtonDismissed] = useState<boolean>(() => globalButtonDismissed);
 
   useEffect(() => {
     const handleUpdate = () => {
       setHasPrompt(globalDeferredPrompt !== null);
       setIsStandalone(checkIsStandalone());
+      setIsButtonDismissed(globalButtonDismissed);
     };
 
     listeners.add(handleUpdate);
@@ -91,6 +116,12 @@ export function usePwaInstall() {
         mediaQuery.removeListener(handleMediaChange);
       }
     };
+  }, []);
+
+  const dismissInstallButton = useCallback(() => {
+    globalButtonDismissed = true;
+    writeInstallButtonDismissed();
+    notifyListeners();
   }, []);
 
   const triggerInstall = useCallback(async (): Promise<'accepted' | 'dismissed' | 'unsupported'> => {
@@ -119,6 +150,8 @@ export function usePwaInstall() {
   return {
     isInstallable: hasPrompt,
     isStandalone,
+    isButtonDismissed,
+    dismissInstallButton,
     platform,
     triggerInstall,
   };

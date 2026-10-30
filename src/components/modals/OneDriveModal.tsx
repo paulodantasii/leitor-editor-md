@@ -13,6 +13,7 @@ import { saveActiveDocument } from '../../services/documentSaveService';
 import { saveRecentDocument, deleteRecentDocument } from '../../services/recentDocumentsService';
 import { OneDriveItem, DocumentState } from '../../types';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
+import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 import {
   X,
   Cloud,
@@ -435,9 +436,9 @@ export const OneDriveModal: React.FC = () => {
                   {idx > 0 && <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />}
                   <button
                     onClick={() => handleNavigateBreadcrumb(idx)}
-                    className="hover:text-sky-600 dark:hover:text-sky-400 truncate max-w-[120px] cursor-pointer"
+                    className="hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer"
                   >
-                    {folder.name}
+                    <MiddleEllipsisText text={folder.name} className="max-w-[120px]" />
                   </button>
                 </React.Fragment>
               ))}
@@ -480,9 +481,9 @@ export const OneDriveModal: React.FC = () => {
                       ) : (
                         <FileCode className="w-5 h-5 text-sky-500 shrink-0" />
                       )}
-                      <div className="truncate">
-                        <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate group-hover:text-sky-600 dark:group-hover:text-sky-400">
-                          {item.name}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-800 dark:text-slate-200 group-hover:text-sky-600 dark:group-hover:text-sky-400">
+                          <MiddleEllipsisText text={item.name} className="w-full" />
                         </p>
                         <p className="text-[11px] text-slate-400">
                           {item.folder

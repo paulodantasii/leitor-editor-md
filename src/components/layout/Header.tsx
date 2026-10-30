@@ -28,6 +28,7 @@ import { SaveDestinationModal } from '../modals/SaveDestinationModal';
 import { saveCoordinator } from '../../services/saveCoordinator';
 import { TabItem } from '../../types';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
+import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 
 export const Header: React.FC = () => {
   const hasDocument = useAppStore((state) => Boolean(state.document));
@@ -100,7 +101,7 @@ export const Header: React.FC = () => {
     }))
   );
 
-  const { isStandalone } = usePwaInstall();
+  const { isStandalone, isButtonDismissed, dismissInstallButton } = usePwaInstall();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -754,16 +755,26 @@ export const Header: React.FC = () => {
             {syncStatus === 'offline-pending' && <WifiOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
           </button>
 
-          {/* Botão Instalar App (PWA) */}
-          {!isStandalone && (
-            <button
-              onClick={() => setIsInstallModalOpen(true)}
-              title="Instalar aplicativo no Windows ou iPad"
-              className="px-2.5 sm:px-3 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/80 hover:bg-blue-100 dark:hover:bg-blue-900/60 flex items-center gap-1.5 text-xs font-semibold transition-all shrink-0 cursor-pointer shadow-2xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Instalar App</span>
-            </button>
+          {/* Botão Instalar App (PWA) — dispensável */}
+          {!isStandalone && !isButtonDismissed && (
+            <div className="flex items-center h-8 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/80 shrink-0 shadow-2xs overflow-hidden">
+              <button
+                onClick={() => setIsInstallModalOpen(true)}
+                title="Instalar aplicativo no Windows ou iPad"
+                className="pl-2.5 sm:pl-3 pr-1.5 h-full text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 flex items-center gap-1.5 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Instalar App</span>
+              </button>
+              <button
+                onClick={dismissInstallButton}
+                title="Ocultar botão de instalação"
+                aria-label="Ocultar botão de instalação"
+                className="px-1.5 h-full text-blue-400 dark:text-blue-500 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 flex items-center transition-colors cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           )}
 
           {/* Mobile Overflow Menu */}
@@ -928,9 +939,11 @@ export const Header: React.FC = () => {
                       />
                     </div>
                   ) : (
-                    <span className="text-[11px] sm:text-xs truncate max-w-[120px] sm:max-w-[180px] md:max-w-[240px]">
-                      {tab.title}
-                    </span>
+                    <MiddleEllipsisText
+                      text={tab.title}
+                      showTooltip={false}
+                      className="text-[11px] sm:text-xs max-w-[120px] sm:max-w-[180px] md:max-w-[240px]"
+                    />
                   )}
 
                   {/* Botão Fechar Aba (X) com fechamento inteligente */}

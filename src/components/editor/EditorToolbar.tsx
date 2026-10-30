@@ -33,12 +33,15 @@ import {
   Undo,
   Redo,
   RemoveFormatting,
+  FileCode,
 } from 'lucide-react';
 import { HighlightColor } from '../../types';
 import { HIGHLIGHT_COLORS } from './HighlightPopover';
 
 interface EditorToolbarProps {
   editor: Editor | null;
+  isSourceMode?: boolean;
+  onToggleSourceMode?: () => void;
 }
 
 const COLOR_BAR_MAP: Record<HighlightColor, string> = {
@@ -52,7 +55,11 @@ const COLOR_BAR_MAP: Record<HighlightColor, string> = {
   gray: 'bg-slate-400',
 };
 
-export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor }) => {
+export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
+  editor,
+  isSourceMode = false,
+  onToggleSourceMode,
+}) => {
   // Re-render a toolbar quando a seleção/conteúdo do editor muda.
   // Necessário porque o componente é memoizado e a referência de `editor` nunca muda.
   const [, forceToolbarUpdate] = useReducer((x: number) => x + 1, 0);
@@ -174,6 +181,13 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor 
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isTableMenuOpen]);
+
+  useEffect(() => {
+    if (isSourceMode) {
+      setIsHighlightMenuOpen(false);
+      setIsTableMenuOpen(false);
+    }
+  }, [isSourceMode]);
 
   if (!editor) return null;
 
@@ -299,6 +313,12 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor 
       className="sticky z-20 my-3 flex justify-center w-full animate-in fade-in slide-in-from-top-3 duration-200 print:hidden"
     >
       <div className="bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700/80 shadow-lg rounded-2xl p-1.5 flex flex-wrap items-center justify-center gap-1 max-w-full">
+        <div
+          aria-disabled={isSourceMode}
+          className={`flex flex-wrap items-center justify-center gap-1 transition-opacity duration-150 ${
+            isSourceMode ? 'opacity-35 pointer-events-none select-none' : ''
+          }`}
+        >
         {/* Formatting Marks: Bold, Italic, Underline, Strike, Highlighter */}
         <div className="flex items-center gap-0.5 pr-1.5 border-r border-slate-200 dark:border-slate-700">
           <button
@@ -785,6 +805,31 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({ editor 
             <Redo className="w-4 h-4" />
           </button>
         </div>
+        </div>
+
+        {/* Toggle Modo Código-Fonte (Markdown Puro) */}
+        {onToggleSourceMode && (
+          <div className="flex items-center pl-1.5 border-l border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              onClick={onToggleSourceMode}
+              aria-pressed={isSourceMode}
+              title={
+                isSourceMode
+                  ? 'Voltar para o Editor Visual (Atalho: Ctrl+;)'
+                  : 'Modo Código-Fonte: editar o arquivo Markdown puro (Atalho: Ctrl+;)'
+              }
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                isSourceMode
+                  ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
+            >
+              <FileCode className="w-4 h-4 shrink-0" />
+              <span>Código-Fonte</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

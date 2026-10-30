@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
 import { SAMPLE_LEGISLATION_DOC } from '../sampleDocs';
+import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 
 export interface HomeScreenProps {
   isOverlay?: boolean;
@@ -206,9 +207,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
             </p>
           </div>
 
-          <div className="w-full pt-2.5 sm:pt-3 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 truncate">
+          <div className="w-full pt-2.5 sm:pt-3 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 min-w-0">
             <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-            <span className="truncate max-w-[140px]">{mostRecentTitle}</span>
+            <MiddleEllipsisText text={mostRecentTitle} className="max-w-[140px]" />
           </div>
         </button>
 
@@ -332,8 +333,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
-                    {item.title}
+                  <p className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                    <MiddleEllipsisText text={item.title} className="w-full" />
                   </p>
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1 mt-0.5">
                     <Clock className="w-3 h-3 shrink-0" />

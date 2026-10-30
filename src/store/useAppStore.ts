@@ -52,6 +52,9 @@ interface AppState {
   setActiveHighlightColor: (color: HighlightColor) => void;
   isEditable: boolean;
   setIsEditable: (editable: boolean) => void;
+  isSourceMode: boolean;
+  setIsSourceMode: (active: boolean) => void;
+  toggleSourceMode: () => void;
 
   // Document State
   document: DocumentState | null;
@@ -451,6 +454,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         document: null,
         fileHandle: null,
         isEditable: false,
+        isSourceMode: false,
         isHighlightMode: false,
         highlightCount: 0,
         syncStatus: 'idle',
@@ -643,25 +647,34 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Highlight & Editing Mode (Mutually exclusive: enabling Editing mode automatically disables Highlight mode)
   isHighlightMode: false,
   setIsHighlightMode: (active) =>
-    set((state) => ({
+    set(() => ({
       isHighlightMode: active,
-      ...(active ? { isEditable: false } : {}),
+      ...(active ? { isEditable: false, isSourceMode: false } : {}),
     })),
   toggleHighlightMode: () =>
     set((state) => {
       const nextActive = !state.isHighlightMode;
       return {
         isHighlightMode: nextActive,
-        ...(nextActive ? { isEditable: false } : {}),
+        ...(nextActive ? { isEditable: false, isSourceMode: false } : {}),
       };
     }),
   activeHighlightColor: 'yellow',
   setActiveHighlightColor: (color) => set({ activeHighlightColor: color }),
   isEditable: false, // Default to Reading mode as specified
   setIsEditable: (editable) =>
-    set((state) => ({
+    set(() => ({
       isEditable: editable,
-      ...(editable ? { isHighlightMode: false } : {}),
+      ...(editable ? { isHighlightMode: false } : { isSourceMode: false }),
+    })),
+  isSourceMode: false,
+  setIsSourceMode: (active) =>
+    set((state) => ({
+      isSourceMode: state.isEditable ? active : false,
+    })),
+  toggleSourceMode: () =>
+    set((state) => ({
+      isSourceMode: state.isEditable ? !state.isSourceMode : false,
     })),
 
   // Document State
@@ -839,6 +852,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       document: null,
       fileHandle: null,
       isEditable: false,
+      isSourceMode: false,
       isHighlightMode: false,
       highlightCount: 0,
       syncStatus: 'idle',
@@ -905,6 +919,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       fileHandle: null,
       highlightCount: 0,
       isEditable: true, // Já abre em modo de edição para digitar direto
+      isSourceMode: false,
       isHighlightMode: false,
     });
   },

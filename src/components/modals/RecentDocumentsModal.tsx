@@ -3,6 +3,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { RecentDocumentItem } from '../../types';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
+import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 import {
   History,
   X,
@@ -238,10 +239,11 @@ export const RecentDocumentsModal: React.FC = () => {
                     </div>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate max-w-[320px]">
-                          {item.title}
-                        </span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MiddleEllipsisText
+                          text={item.title}
+                          className="text-xs font-bold text-slate-800 dark:text-slate-100 max-w-[320px]"
+                        />
                         {item.isOneDrive ? (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 shrink-0">
                             OneDrive
