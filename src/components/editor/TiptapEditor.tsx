@@ -27,6 +27,7 @@ import {
   markBridgeClean,
   hasPendingBridgeChanges,
 } from '../../services/editorContentBridge';
+import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
 
 export const TiptapEditor: React.FC = () => {
   // Fine-grained selectors: avoids re-rendering TiptapEditor on every content change / sync update
@@ -345,6 +346,10 @@ export const TiptapEditor: React.FC = () => {
     editor.commands.setContent(currentDoc.content, false);
     updateHighlightCount(editor);
   }, [docId, editor, updateHighlightCount]);
+
+  // Preserva a posição de leitura (scroll) independente por aba.
+  // Deve ficar APÓS o efeito de setContent acima (ordem de efeitos do React).
+  useTabScrollRestoration(editor);
 
   // Update editor editable mode
   useEffect(() => {
