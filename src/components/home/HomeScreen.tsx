@@ -12,7 +12,6 @@ import {
   Clock,
   ArrowRight,
   Folder,
-  Sparkles,
   BookOpen,
   Download,
 } from 'lucide-react';
@@ -176,9 +175,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
       <div className="relative mb-2.5 group">
         <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-xl shadow-blue-500/25 group-hover:scale-105 transition-transform duration-300">
           <Highlighter className="w-8 h-8 sm:w-9 sm:h-9" />
-        </div>
-        <div className="absolute -bottom-1 -right-1 bg-amber-400 text-amber-950 p-1 rounded-full shadow-md">
-          <Sparkles className="w-3.5 h-3.5" />
         </div>
       </div>
 
