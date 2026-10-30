@@ -65,7 +65,7 @@ export const AppearanceMenu: React.FC = () => {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 z-50 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="fixed left-1/2 -translate-x-1/2 top-12 sm:absolute sm:left-auto sm:right-0 sm:translate-x-0 sm:top-full sm:mt-2 w-72 max-w-[calc(100vw-1.5rem)] bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-4 z-50 space-y-4 animate-in fade-in zoom-in-95">
           <div className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
             Aparência & Tipografia
           </div>

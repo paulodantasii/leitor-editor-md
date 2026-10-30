@@ -14,8 +14,6 @@ import {
   Printer,
   ChevronDown,
   Cloud,
-  Check,
-  RefreshCw,
   MoreVertical,
   WifiOff,
   FilePlus,
@@ -70,7 +68,7 @@ export const Header: React.FC = () => {
     isSaveDestinationModalOpen,
     setIsSaveDestinationModalOpen,
     cloudConflict,
-    syncNotification,
+    setSyncNotification,
     setIsInstallModalOpen,
   } = useAppStore(
     useShallow((state) => ({
@@ -97,7 +95,7 @@ export const Header: React.FC = () => {
       isSaveDestinationModalOpen: state.isSaveDestinationModalOpen,
       setIsSaveDestinationModalOpen: state.setIsSaveDestinationModalOpen,
       cloudConflict: state.cloudConflict,
-      syncNotification: state.syncNotification,
+      setSyncNotification: state.setSyncNotification,
       setIsInstallModalOpen: state.setIsInstallModalOpen,
     }))
   );
@@ -137,9 +135,6 @@ export const Header: React.FC = () => {
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
-
-  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
 
   // Tab renaming state
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
@@ -441,7 +436,7 @@ export const Header: React.FC = () => {
         text: 'Conflito',
         subtext: 'Arquivo alterado na nuvem ou externamente',
         dotClass: 'bg-rose-500 animate-pulse',
-        colorClass: 'text-rose-600 dark:text-rose-400 font-semibold',
+        colorClass: 'text-rose-600 dark:text-rose-400 font-medium',
         badgeClass: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800',
         isClickable: false,
       };
@@ -449,10 +444,10 @@ export const Header: React.FC = () => {
 
     if (syncStatus === 'error') {
       return {
-        text: 'Erro — tentar novamente',
-        subtext: 'Falha ao salvar',
+        text: 'Erro — repetir',
+        subtext: 'Falha ao salvar. Clique para tentar novamente.',
         dotClass: 'bg-red-500',
-        colorClass: 'text-red-600 dark:text-red-400 font-semibold hover:underline',
+        colorClass: 'text-red-600 dark:text-red-400 font-medium hover:underline',
         badgeClass: 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800',
         isClickable: true,
         action: () => handleSaveButtonClick(),
@@ -463,9 +458,9 @@ export const Header: React.FC = () => {
       return {
         text: 'Pendente (offline)',
         subtext: 'Salvo neste navegador; será enviado ao voltar online',
-        dotClass: 'bg-amber-500',
-        colorClass: 'text-amber-600 dark:text-amber-400 font-medium',
-        badgeClass: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800',
+        dotClass: 'bg-amber-500/80',
+        colorClass: 'text-amber-600/80 dark:text-amber-400/80 font-normal',
+        badgeClass: '',
         isClickable: false,
       };
     }
@@ -474,9 +469,9 @@ export const Header: React.FC = () => {
       return {
         text: 'Salvando…',
         subtext: 'Gravando alterações',
-        dotClass: 'bg-sky-500 animate-ping',
-        colorClass: 'text-sky-600 dark:text-sky-400 font-medium',
-        badgeClass: 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800',
+        dotClass: 'bg-sky-400/80 dark:bg-sky-400/70 animate-pulse',
+        colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
+        badgeClass: '',
         isClickable: false,
       };
     }
@@ -487,9 +482,9 @@ export const Header: React.FC = () => {
     if (hasPendingChanges) {
       return {
         text: 'Editando…',
-        subtext: 'Alterações não salvas',
-        dotClass: 'bg-amber-500',
-        colorClass: 'text-amber-600 dark:text-amber-400 font-medium',
+        subtext: 'Alterações em andamento',
+        dotClass: 'bg-amber-400/75 dark:bg-amber-400/60',
+        colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
         badgeClass: '',
         isClickable: false,
       };
@@ -498,10 +493,10 @@ export const Header: React.FC = () => {
     if (currentDoc.oneDriveItemId) {
       const timeStr = currentDoc.lastSavedAt ? ` às ${currentDoc.lastSavedAt}` : '';
       return {
-        text: `Salvo no OneDrive${timeStr}`,
-        subtext: 'Sincronizado na nuvem',
-        dotClass: 'bg-emerald-500',
-        colorClass: 'text-slate-500 dark:text-slate-400',
+        text: 'Salvo no OneDrive',
+        subtext: `Sincronizado na nuvem${timeStr}`,
+        dotClass: 'bg-emerald-500/75 dark:bg-emerald-400/70',
+        colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
         badgeClass: '',
         isClickable: false,
       };
@@ -510,20 +505,20 @@ export const Header: React.FC = () => {
     if (fileHandle) {
       const timeStr = currentDoc.lastSavedAt ? ` às ${currentDoc.lastSavedAt}` : '';
       return {
-        text: `Salvo no arquivo${timeStr}`,
-        subtext: 'Arquivo local vinculado',
-        dotClass: 'bg-emerald-500',
-        colorClass: 'text-slate-500 dark:text-slate-400',
+        text: 'Salvo no arquivo',
+        subtext: `Arquivo local sincronizado${timeStr}`,
+        dotClass: 'bg-emerald-500/75 dark:bg-emerald-400/70',
+        colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
         badgeClass: '',
         isClickable: false,
       };
     }
 
     return {
-      text: 'Rascunho salvo no cache',
-      subtext: 'Armazenado no cache local',
-      dotClass: 'bg-slate-400 dark:bg-slate-500',
-      colorClass: 'text-slate-400 dark:text-slate-500',
+      text: 'Rascunho salvo',
+      subtext: 'Armazenado automaticamente no cache deste navegador',
+      dotClass: 'bg-slate-400/75 dark:bg-slate-500',
+      colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
       badgeClass: '',
       isClickable: false,
     };
@@ -532,15 +527,7 @@ export const Header: React.FC = () => {
   const statusInfo = getUnifiedStatus();
 
   const showNotification = (msg: string, isError: boolean = false) => {
-    if (isError) {
-      setSaveSuccessMessage(null);
-      setSaveErrorMessage(msg);
-      setTimeout(() => setSaveErrorMessage(null), 5000);
-    } else {
-      setSaveErrorMessage(null);
-      setSaveSuccessMessage(msg);
-      setTimeout(() => setSaveSuccessMessage(null), 3000);
-    }
+    setSyncNotification(isError ? `Erro: ${msg}` : msg);
   };
 
   const handleExportMD = () => {
@@ -564,49 +551,36 @@ export const Header: React.FC = () => {
       ref={headerRef}
       className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 header-safe-area transition-colors print:hidden shadow-xs"
     >
-      {/* LINHA 1: Ações Principais e Indicadores de Status */}
-      <div className="h-10 sm:h-11 px-3 sm:px-4 flex items-center justify-between gap-2 sm:gap-4 max-w-7xl mx-auto">
-        {/* Esquerda / Centro-Esquerda: Status de salvamento e feedback inline */}
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+      {/* LINHA 1: Barra de Ferramentas Centralizada e Indicador de Status Discreto */}
+      <div className="h-10 sm:h-11 px-2.5 sm:px-4 grid grid-cols-[1fr_auto_1fr] items-center gap-1.5 sm:gap-3 max-w-7xl mx-auto">
+        {/* Coluna 1 (Esquerda): Status de salvamento visível e discreto */}
+        <div className="flex items-center justify-start min-w-0 overflow-hidden">
           {hasDocument && (
-            <div className="flex items-center gap-1.5 text-[11px] leading-tight shrink-0">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusInfo.dotClass}`} />
+            <div
+              className="flex items-center gap-1.5 text-[11px] leading-tight select-none min-w-0 max-w-full transition-colors"
+              title={statusInfo.subtext}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors duration-300 ${statusInfo.dotClass}`} />
               {statusInfo.isClickable ? (
                 <button
                   type="button"
                   onClick={statusInfo.action}
-                  className={`px-1.5 py-0.5 rounded border transition-colors ${statusInfo.colorClass} ${statusInfo.badgeClass}`}
-                  title="Clique para tentar salvar novamente"
+                  className={`px-1.5 py-0.5 rounded border transition-colors cursor-pointer truncate ${statusInfo.colorClass} ${statusInfo.badgeClass}`}
+                  title={statusInfo.subtext}
                 >
-                  {statusInfo.text}
+                  <span className="hidden sm:inline">{statusInfo.text}</span>
                 </button>
               ) : (
-                <span className={`truncate max-w-[140px] sm:max-w-[200px] md:max-w-none ${statusInfo.colorClass}`} title={statusInfo.subtext}>
+                <span className={`hidden sm:inline truncate transition-colors duration-300 ${statusInfo.colorClass}`}>
                   {statusInfo.text}
                 </span>
               )}
             </div>
           )}
-
-          {saveSuccessMessage && (
-            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full animate-in fade-in shrink-0">
-              ✓ {saveSuccessMessage}
-            </span>
-          )}
-          {saveErrorMessage && (
-            <span className="text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50 px-2 py-0.5 rounded-full animate-in fade-in truncate max-w-[200px] sm:max-w-[300px]" title={saveErrorMessage}>
-              ⚠ {saveErrorMessage}
-            </span>
-          )}
-          {syncNotification && !saveSuccessMessage && !saveErrorMessage && (
-            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded-full animate-in fade-in truncate max-w-[200px] sm:max-w-[300px]" title={syncNotification}>
-              {syncNotification}
-            </span>
-          )}
         </div>
 
-        {/* Direita: Barra de Ferramentas de Ações */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* Coluna 2 (Centro): Barra de Ferramentas de Ações Centralizada */}
+        <div className="flex items-center justify-center gap-1 sm:gap-1.5 md:gap-2 shrink-0">
           {hasDocument && (
             <>
               {/* Modo Grifar (Toggle Button + Badge) */}
@@ -772,14 +746,12 @@ export const Header: React.FC = () => {
             onClick={() => setIsOneDriveModalOpen(true)}
             className="px-2.5 sm:px-3 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0 cursor-pointer"
           >
-            <Cloud className="w-4 h-4 text-blue-500" />
-            <span className="hidden sm:inline">
+            <Cloud className="w-4 h-4 text-blue-500 shrink-0" />
+            <span className="hidden sm:inline truncate max-w-[90px]">
               {userProfile ? userProfile.name.split(' ')[0] : 'OneDrive'}
             </span>
 
-            {syncStatus === 'saving' && <RefreshCw className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
-            {syncStatus === 'saved' && <Check className="w-3.5 h-3.5 text-emerald-500" />}
-            {syncStatus === 'offline-pending' && <WifiOff className="w-3.5 h-3.5 text-amber-500" />}
+            {syncStatus === 'offline-pending' && <WifiOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
           </button>
 
           {/* Botão Instalar App (PWA) */}
@@ -883,7 +855,6 @@ export const Header: React.FC = () => {
                   </>
                 )}
 
-
                 {!isStandalone && (
                   <div className="pt-1 mt-1 border-t border-slate-100 dark:border-slate-700">
                     <button
@@ -901,6 +872,9 @@ export const Header: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Coluna 3 (Direita): Espaçador simétrico para garantir centralização exata da Coluna 2 */}
+        <div aria-hidden="true" className="min-w-0" />
       </div>
 
       {/* LINHA 2: Barra Fina de Abas Estilo Navegador */}
@@ -929,16 +903,8 @@ export const Header: React.FC = () => {
                       ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
                   }`}
-                  title={`${tab.title}${tab.isDirty ? ' (não salvo)' : ''} — Duplo clique para renomear`}
+                  title={`${tab.title} — Duplo clique para renomear`}
                 >
-                  {/* Dot indicador de alterações não salvas */}
-                  {tab.isDirty && (
-                    <span
-                      className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 animate-pulse"
-                      title="Alterações não salvas"
-                    />
-                  )}
-
                   {/* Nome da aba ou input inline de renomeação com expansão automática */}
                   {isEditing ? (
                     <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">

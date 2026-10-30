@@ -5,7 +5,9 @@ import { getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDr
 import { saveRecentDocument } from '../services/recentDocumentsService';
 import { saveCoordinator } from '../services/saveCoordinator';
 
-const AUTOSAVE_IDLE_DELAY_MS = 3000; // 3 segundos de pausa após digitação
+const AUTOSAVE_IDLE_DELAY_MS = 3000; // 3 segundos de pausa após digitação em modo edição
+const AUTOSAVE_HIGHLIGHT_DELAY_MS = 1500; // 1.5 segundo após grifo em modo leitura
+const DRAFT_SYNC_DELAY_MS = 1200; // 1.2 segundo para confirmar rascunho salvo no cache
 const AUTOSAVE_MAX_WAIT_MS = 30000; // 30 segundos de max-wait durante digitação contínua
 const CLOUD_POLL_INTERVAL_MS = 10000; // Polling ativo a cada 10 segundos enquanto aberto na tela
 const RETRY_BACKOFF_DELAYS = [5000, 15000, 60000]; // 5s -> 15s -> 60s
@@ -18,6 +20,7 @@ export function useAutoSaveAndSync() {
     setSyncNotification,
     setCloudConflict,
     fileHandle,
+    isEditable,
   } = useAppStore(
     useShallow((state) => ({
       document: state.document,
@@ -26,6 +29,7 @@ export function useAutoSaveAndSync() {
       setSyncNotification: state.setSyncNotification,
       setCloudConflict: state.setCloudConflict,
       fileHandle: state.fileHandle,
+      isEditable: state.isEditable,
     }))
   );
 
@@ -76,6 +80,24 @@ export function useAutoSaveAndSync() {
     }
 
     const hasWritableSource = Boolean(currentDoc.oneDriveItemId || fileHandle || currentDoc.fileHandle);
+    const hasPendingDraft = !hasWritableSource && (currentDoc.revision ?? 0) > (currentDoc.draftRevision ?? 0);
+
+    // Se for rascunho local com edições pendentes, confirma o rascunho no cache após breve pausa
+    if (hasPendingDraft) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        debounceTimerRef.current = null;
+        saveCoordinator.saveDraft();
+      }, DRAFT_SYNC_DELAY_MS);
+
+      return () => {
+        if (debounceTimerRef.current) {
+          clearTimeout(debounceTimerRef.current);
+        }
+      };
+    }
 
     // Se não tiver alterações ou não tiver fonte gravável, limpa timers
     if (!currentDoc.isDirty || !hasWritableSource) {
@@ -124,13 +146,14 @@ export function useAutoSaveAndSync() {
       }
     };
 
-    // A. Idle Debounce de 3s
+    // A. Idle Debounce (1.5s para grifos em modo leitura; 3s para digitação em modo edição)
+    const idleDelay = isEditable ? AUTOSAVE_IDLE_DELAY_MS : AUTOSAVE_HIGHLIGHT_DELAY_MS;
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
     debounceTimerRef.current = setTimeout(() => {
       triggerSave();
-    }, AUTOSAVE_IDLE_DELAY_MS);
+    }, idleDelay);
 
     // B. Max-Wait de 30s (garante salvamento mesmo se o usuário digitar sem parar)
     if (!maxWaitTimerRef.current) {
@@ -148,10 +171,12 @@ export function useAutoSaveAndSync() {
     currentDoc?.content,
     currentDoc?.title,
     currentDoc?.revision,
+    currentDoc?.draftRevision,
     currentDoc?.isDirty,
     currentDoc?.oneDriveItemId,
     fileHandle,
     currentDoc?.fileHandle,
+    isEditable,
   ]);
 
   // 3. Gatilhos Imediatos: Perda de Foco, Aba Oculta, Voltar Online
