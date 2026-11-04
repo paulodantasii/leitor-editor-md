@@ -460,4 +460,21 @@ describe('Reordenação de Abas e Grupos de Abas com Cores', () => {
     tabs = useAppStore.getState().tabs.map((t) => t.id);
     expect(tabs).toEqual([tabAId, tabBId, tabCId, tabDId]);
   });
+
+  it('agrupa na ordem [targetTab, sourceTab] ao soltar no centro e remove do grupo ao arrastar para fora', () => {
+    const tab1 = useAppStore.getState().openTab({ title: '1.md', content: '1' });
+    const tab2 = useAppStore.getState().openTab({ title: '2.md', content: '2' });
+    const tab3 = useAppStore.getState().openTab({ title: '3.md', content: '3' });
+
+    // Usuário arrasta tab3 sobre o centro de tab2 -> cria grupo [tab2, tab3]
+    const gId = useAppStore.getState().createTabGroup([tab2, tab3], { title: 'Grupo', color: 'blue' });
+    expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab1, tab2, tab3]);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab2)?.groupId).toBe(gId);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab3)?.groupId).toBe(gId);
+
+    // Usuário arrasta tab3 para antes de tab1 (que está fora de grupo) com adoptTargetGroup = true
+    useAppStore.getState().reorderTabs(tab3, tab1, 'before', true);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab3)?.groupId).toBeNull();
+    expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab3, tab1, tab2]);
+  });
 });

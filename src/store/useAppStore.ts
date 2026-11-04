@@ -719,22 +719,33 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   createTabGroup: (tabIds: string[], options?: { title?: string; color?: HighlightColor }) => {
     const state = get();
-    const validIds = new Set(tabIds.filter((id) => state.tabs.some((t) => t.id === id)));
-    if (validIds.size === 0) return '';
+    const uniqueValidIds = Array.from(new Set(tabIds)).filter((id) =>
+      state.tabs.some((t) => t.id === id)
+    );
+    if (uniqueValidIds.length === 0) return '';
 
+    const validIdSet = new Set(uniqueValidIds);
     const groupId = 'group-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
     const color: HighlightColor = options?.color || state.activeHighlightColor || 'yellow';
     const title = options?.title?.trim() || 'Grupo';
     const newGroup: TabGroup = { id: groupId, title, color, collapsed: false };
 
-    const firstIndex = state.tabs.findIndex((t) => validIds.has(t.id));
-    const tabsInGroup = state.tabs
-      .filter((t) => validIds.has(t.id))
-      .map((t) => ({ ...t, groupId }));
-    const tabsNotInGroup = state.tabs.filter((t) => !validIds.has(t.id));
+    // Ancora a posição do grupo na primeira aba informada em uniqueValidIds (ex.: a aba alvo onde ocorreu o drop)
+    const anchorTabId = uniqueValidIds[0];
+    const anchorIndex = state.tabs.findIndex((t) => t.id === anchorTabId);
 
-    const tabsBeforeFirst = state.tabs.slice(0, firstIndex).filter((t) => !validIds.has(t.id));
-    const insertIdx = tabsBeforeFirst.length;
+    // Preserva a ordem exata de uniqueValidIds dentro do grupo criado
+    const tabMap = new Map(state.tabs.map((t) => [t.id, t]));
+    const tabsInGroup: TabItem[] = uniqueValidIds.map((id) => ({
+      ...tabMap.get(id)!,
+      groupId,
+    }));
+
+    const tabsNotInGroup = state.tabs.filter((t) => !validIdSet.has(t.id));
+    const tabsBeforeAnchor = state.tabs
+      .slice(0, anchorIndex)
+      .filter((t) => !validIdSet.has(t.id));
+    const insertIdx = tabsBeforeAnchor.length;
 
     const rawNextTabs = [
       ...tabsNotInGroup.slice(0, insertIdx),

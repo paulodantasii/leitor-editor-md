@@ -1,20 +1,11 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../store/useAppStore';
 import { TabItem, TabGroup, HighlightColor } from '../../types';
-import { getHighlightColorOption, HighlightColorSwatches } from '../editor/HighlightPopover';
+import { getHighlightColorOption, HighlightPopover } from '../editor/HighlightPopover';
 import { MiddleEllipsisText } from '../ui/MiddleEllipsisText';
 import { saveCoordinator } from '../../services/saveCoordinator';
-import {
-  X,
-  Plus,
-  Pencil,
-  ChevronRight,
-  ChevronDown,
-  FolderMinus,
-  FolderPlus,
-  Palette,
-} from 'lucide-react';
+import { X, Plus } from 'lucide-react';
 
 interface TabBarProps {
   onRequestCloseTab: (e: React.MouseEvent, tab: TabItem) => void;
@@ -25,6 +16,8 @@ type TabRenderSegment =
   | { type: 'single'; tab: TabItem }
   | { type: 'group'; group: TabGroup; tabs: TabItem[] };
 
+type DropZonePosition = 'before' | 'group' | 'after';
+
 export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) => {
   const {
     tabs,
@@ -32,14 +25,12 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
     tabGroups,
     switchTab,
     renameTab,
-    openTab,
     reorderTabs,
     moveTabGroup,
     createTabGroup,
     assignTabToGroup,
     updateTabGroup,
     ungroupTabs,
-    setIsEditable,
   } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
@@ -47,77 +38,87 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
       tabGroups: state.tabGroups,
       switchTab: state.switchTab,
       renameTab: state.renameTab,
-      openTab: state.openTab,
       reorderTabs: state.reorderTabs,
       moveTabGroup: state.moveTabGroup,
       createTabGroup: state.createTabGroup,
       assignTabToGroup: state.assignTabToGroup,
       updateTabGroup: state.updateTabGroup,
       ungroupTabs: state.ungroupTabs,
-      setIsEditable: state.setIsEditable,
     }))
   );
 
-  // Tab renaming state
+  // Inline Tab Rename State
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const tabRenameInputRef = useRef<HTMLInputElement>(null);
   const isCancelingRenameRef = useRef(false);
 
-  // Group renaming state
+  // Inline Group Rename State
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingGroupTitle, setEditingGroupTitle] = useState('');
   const groupRenameInputRef = useRef<HTMLInputElement>(null);
+  const groupClickTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Tab context menu state
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
-  const tabContextMenuRef = useRef<HTMLDivElement>(null);
+  // Floating HighlightPopover State for Group Border Color & Ungroup
+  const [colorPickerPopover, setColorPickerPopover] = useState<{
+    groupId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const popoverContainerRef = useRef<HTMLDivElement>(null);
 
-  // Group context menu/popover state
-  const [groupPopover, setGroupPopover] = useState<{ x: number; y: number; groupId: string } | null>(null);
-  const groupPopoverRef = useRef<HTMLDivElement>(null);
-
-  // Drag & Drop State
+  // Drag & Drop State (shared by Mouse HTML5 DnD and iPad Touch Drag)
   const [dragSource, setDragSource] = useState<
     { type: 'tab'; id: string } | { type: 'group'; id: string } | null
   >(null);
   const [dropIndicator, setDropIndicator] = useState<{
     targetTabId: string;
-    position: 'before' | 'after';
+    position: DropZonePosition;
   } | null>(null);
   const [chipDropTargetGroupId, setChipDropTargetGroupId] = useState<string | null>(null);
 
-  // Close menus when clicking outside or pressing Escape
+  // Touch drag refs for iPad
+  const touchHoldTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const touchStartCoordsRef = useRef<{ x: number; y: number } | null>(null);
+  const isTouchDraggingRef = useRef(false);
+
+  // Close color picker popover when clicking/touching outside or pressing Escape
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    if (!colorPickerPopover) return;
+
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
       const target = e.target as Node;
-      if (tabContextMenuRef.current && !tabContextMenuRef.current.contains(target)) {
-        setTabContextMenu(null);
-      }
-      if (groupPopoverRef.current && !groupPopoverRef.current.contains(target)) {
-        setGroupPopover(null);
+      if (popoverContainerRef.current && !popoverContainerRef.current.contains(target)) {
+        setColorPickerPopover(null);
       }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setTabContextMenu(null);
-        setGroupPopover(null);
+        setColorPickerPopover(null);
       }
     };
 
-    if (tabContextMenu || groupPopover) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleKeyDown);
-    }
-
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside, { passive: true });
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [tabContextMenu, groupPopover]);
+  }, [colorPickerPopover]);
 
-  // Tab renaming triggers
+  // Helper to open the HighlightPopover anchored below a group chip or tab element
+  const openGroupColorPopoverAtElement = useCallback((groupId: string, el: HTMLElement | null) => {
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = Math.max(140, Math.min(rect.left + rect.width / 2, window.innerWidth - 140));
+    const y = rect.bottom + 6;
+    setColorPickerPopover({ groupId, x, y });
+  }, []);
+
+  // Tab renaming handlers
   const handleStartTabRename = (tab: TabItem) => {
     isCancelingRenameRef.current = false;
     setEditingTabId(tab.id);
@@ -171,8 +172,12 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
     }
   };
 
-  // Group renaming triggers
+  // Group renaming handlers
   const handleStartGroupRename = (group: TabGroup) => {
+    if (groupClickTimerRef.current) {
+      clearTimeout(groupClickTimerRef.current);
+      groupClickTimerRef.current = null;
+    }
     setEditingGroupId(group.id);
     setEditingGroupTitle(group.title);
     setTimeout(() => {
@@ -202,41 +207,186 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
     }
   };
 
-  const handleOpenTabContextMenu = (e: React.MouseEvent, tab: TabItem) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const x = Math.min(e.clientX, window.innerWidth - 220);
-    const y = e.clientY + 8;
-    setTabContextMenu({ x, y, tabId: tab.id });
-    setGroupPopover(null);
+  // Compute drop zone ('before' | 'group' | 'after') from pointer X inside a tab element
+  const computeTabDropZone = (
+    clientX: number,
+    rect: DOMRect,
+    source: { type: 'tab'; id: string } | { type: 'group'; id: string } | null,
+    targetTab: TabItem
+  ): DropZonePosition => {
+    const ratio = (clientX - rect.left) / Math.max(rect.width, 1);
+
+    // Only allow 'group' center drop when dragging a different tab
+    const canDropToGroup =
+      source?.type === 'tab' &&
+      source.id !== targetTab.id &&
+      !(targetTab.groupId && tabs.find((t) => t.id === source.id)?.groupId === targetTab.groupId);
+
+    if (canDropToGroup && ratio >= 0.28 && ratio <= 0.72) {
+      return 'group';
+    }
+    return ratio < 0.5 ? 'before' : 'after';
   };
 
-  const handleOpenGroupPopover = (e: React.MouseEvent, group: TabGroup) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const x = Math.min(e.clientX, window.innerWidth - 240);
-    const y = e.clientY + 8;
-    setGroupPopover({ x, y, groupId: group.id });
-    setTabContextMenu(null);
+  // Execute drop on a target tab
+  const executeDropOnTab = useCallback(
+    (
+      source: { type: 'tab'; id: string } | { type: 'group'; id: string },
+      targetTab: TabItem,
+      position: DropZonePosition,
+      targetElement: HTMLElement | null
+    ) => {
+      if (source.type === 'group') {
+        const edgePos = position === 'after' ? 'after' : 'before';
+        moveTabGroup(source.id, targetTab.id, edgePos);
+        return;
+      }
+
+      if (source.id === targetTab.id) return;
+
+      if (position === 'group') {
+        if (targetTab.groupId) {
+          // Target tab already in a group -> join that group right after targetTab
+          reorderTabs(source.id, targetTab.id, 'after', true);
+          updateTabGroup(targetTab.groupId, { collapsed: false });
+        } else {
+          // Neither tab (or target tab) has a group -> create new group with both and pop color picker!
+          const newGroupId = createTabGroup([targetTab.id, source.id], { title: 'Grupo' });
+          if (newGroupId) {
+            requestAnimationFrame(() => {
+              const chipEl = document.querySelector(
+                `[data-group-chip-id="${newGroupId}"]`
+              ) as HTMLElement | null;
+              openGroupColorPopoverAtElement(newGroupId, chipEl || targetElement);
+            });
+          }
+        }
+        return;
+      }
+
+      // Edge reorder ('before' | 'after'): adopt targetTab's group membership (so dragging inside a group joins it, dragging outside leaves it)
+      reorderTabs(source.id, targetTab.id, position, true);
+    },
+    [createTabGroup, moveTabGroup, openGroupColorPopoverAtElement, reorderTabs, updateTabGroup]
+  );
+
+  // Execute drop on a group header chip
+  const executeDropOnGroupChip = useCallback(
+    (source: { type: 'tab'; id: string } | { type: 'group'; id: string }, group: TabGroup) => {
+      if (source.type === 'tab') {
+        assignTabToGroup(source.id, group.id);
+        updateTabGroup(group.id, { collapsed: false });
+      } else if (source.type === 'group' && source.id !== group.id) {
+        const firstGroupTab = tabs.find((t) => t.groupId === group.id);
+        if (firstGroupTab) {
+          moveTabGroup(source.id, firstGroupTab.id, 'before');
+        }
+      }
+    },
+    [assignTabToGroup, moveTabGroup, tabs, updateTabGroup]
+  );
+
+  // iPad / Touch Drag Handlers
+  const handleTouchStartItem = (
+    e: React.TouchEvent,
+    source: { type: 'tab'; id: string } | { type: 'group'; id: string },
+    isEditing: boolean
+  ) => {
+    if (isEditing) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+
+    touchStartCoordsRef.current = { x: touch.clientX, y: touch.clientY };
+    isTouchDraggingRef.current = false;
+
+    if (touchHoldTimerRef.current) clearTimeout(touchHoldTimerRef.current);
+    touchHoldTimerRef.current = setTimeout(() => {
+      isTouchDraggingRef.current = true;
+      setDragSource(source);
+    }, 180);
   };
 
-  // Add new blank document into a group
-  const handleNewTabInGroup = (groupId: string) => {
-    const newDocId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const newTabId = openTab({
-      title: 'Sem Título.md',
-      content: '',
-      docId: newDocId,
-    });
-    assignTabToGroup(newTabId, groupId);
-    updateTabGroup(groupId, { collapsed: false });
-    setIsEditable(true);
+  const handleTouchMoveItem = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+
+    if (!isTouchDraggingRef.current) {
+      if (touchStartCoordsRef.current) {
+        const dx = Math.abs(touch.clientX - touchStartCoordsRef.current.x);
+        const dy = Math.abs(touch.clientY - touchStartCoordsRef.current.y);
+        if (dx > 8 || dy > 8) {
+          if (touchHoldTimerRef.current) {
+            clearTimeout(touchHoldTimerRef.current);
+            touchHoldTimerRef.current = null;
+          }
+        }
+      }
+      return;
+    }
+
+    if (!dragSource) return;
+    e.preventDefault();
+
+    const elUnderFinger = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;
+    if (!elUnderFinger) return;
+
+    const groupChipEl = elUnderFinger.closest('[data-group-chip-id]') as HTMLElement | null;
+    if (groupChipEl) {
+      const targetGroupId = groupChipEl.getAttribute('data-group-chip-id');
+      setChipDropTargetGroupId(targetGroupId);
+      setDropIndicator(null);
+      return;
+    }
+
+    setChipDropTargetGroupId(null);
+    const tabEl = elUnderFinger.closest('[data-tab-id]') as HTMLElement | null;
+    if (tabEl) {
+      const targetTabId = tabEl.getAttribute('data-tab-id');
+      const targetTab = tabs.find((t) => t.id === targetTabId);
+      if (targetTab) {
+        const rect = tabEl.getBoundingClientRect();
+        const zone = computeTabDropZone(touch.clientX, rect, dragSource, targetTab);
+        setDropIndicator({ targetTabId: targetTab.id, position: zone });
+        return;
+      }
+    }
+
+    setDropIndicator(null);
+  };
+
+  const handleTouchEndItem = () => {
+    if (touchHoldTimerRef.current) {
+      clearTimeout(touchHoldTimerRef.current);
+      touchHoldTimerRef.current = null;
+    }
+
+    if (isTouchDraggingRef.current && dragSource) {
+      if (chipDropTargetGroupId) {
+        const targetGroup = tabGroups.find((g) => g.id === chipDropTargetGroupId);
+        if (targetGroup) {
+          executeDropOnGroupChip(dragSource, targetGroup);
+        }
+      } else if (dropIndicator) {
+        const targetTab = tabs.find((t) => t.id === dropIndicator.targetTabId);
+        const tabEl = document.querySelector(
+          `[data-tab-id="${dropIndicator.targetTabId}"]`
+        ) as HTMLElement | null;
+        if (targetTab) {
+          executeDropOnTab(dragSource, targetTab, dropIndicator.position, tabEl);
+        }
+      }
+    }
+
+    isTouchDraggingRef.current = false;
+    touchStartCoordsRef.current = null;
+    setDragSource(null);
+    setDropIndicator(null);
+    setChipDropTargetGroupId(null);
   };
 
   // Build contiguous render segments
   const segments: TabRenderSegment[] = [];
   const groupMap = new Map(tabGroups.map((g) => [g.id, g]));
-
   let currentGroupSegment: { type: 'group'; group: TabGroup; tabs: TabItem[] } | null = null;
 
   for (const tab of tabs) {
@@ -245,9 +395,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
       if (currentGroupSegment && currentGroupSegment.group.id === tab.groupId) {
         currentGroupSegment.tabs.push(tab);
       } else {
-        if (currentGroupSegment) {
-          segments.push(currentGroupSegment);
-        }
+        if (currentGroupSegment) segments.push(currentGroupSegment);
         currentGroupSegment = { type: 'group', group, tabs: [tab] };
       }
     } else {
@@ -258,135 +406,134 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
       segments.push({ type: 'single', tab });
     }
   }
+  if (currentGroupSegment) segments.push(currentGroupSegment);
 
-  if (currentGroupSegment) {
-    segments.push(currentGroupSegment);
-  }
+  // Render a single tab item (used both standalone and inside a group)
+  const renderTabPill = (tab: TabItem) => {
+    const isActive = tab.id === activeTabId;
+    const isEditing = editingTabId === tab.id;
+    const isDropTarget = dropIndicator?.targetTabId === tab.id;
+    const dropPos = isDropTarget ? dropIndicator.position : null;
+
+    return (
+      <div
+        key={tab.id}
+        data-tab-id={tab.id}
+        draggable={!isEditing}
+        onDragStart={(e) => {
+          setDragSource({ type: 'tab', id: tab.id });
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', tab.id);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          const rect = e.currentTarget.getBoundingClientRect();
+          const zone = computeTabDropZone(e.clientX, rect, dragSource, tab);
+          setDropIndicator({ targetTabId: tab.id, position: zone });
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          if (dropIndicator?.targetTabId === tab.id) {
+            setDropIndicator(null);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (dragSource && dropIndicator) {
+            executeDropOnTab(dragSource, tab, dropIndicator.position, e.currentTarget);
+          }
+          setDragSource(null);
+          setDropIndicator(null);
+        }}
+        onDragEnd={() => {
+          setDragSource(null);
+          setDropIndicator(null);
+        }}
+        onTouchStart={(e) => handleTouchStartItem(e, { type: 'tab', id: tab.id }, isEditing)}
+        onTouchMove={handleTouchMoveItem}
+        onTouchEnd={handleTouchEndItem}
+        onClick={() => {
+          if (!isEditing && !isActive) switchTab(tab.id);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          if (!isEditing) handleStartTabRename(tab);
+        }}
+        className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
+          dropPos === 'before' ? 'border-l-2 border-l-blue-500 pl-1.5' : ''
+        } ${dropPos === 'after' ? 'border-r-2 border-r-blue-500 pr-1.5' : ''} ${
+          dropPos === 'group'
+            ? 'ring-2 ring-amber-400 bg-amber-50/70 dark:bg-amber-950/40 scale-[1.03]'
+            : ''
+        } ${
+          isActive || isEditing
+            ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
+            : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
+        }`}
+        title={`${tab.title} — Arraste para as bordas para ordenar ou para o centro de outra aba para agrupar`}
+      >
+        {isEditing ? (
+          <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">
+            <span
+              aria-hidden="true"
+              className="invisible col-start-1 row-start-1 whitespace-pre text-[11px] sm:text-xs font-semibold px-1.5 py-0 border border-transparent pointer-events-none select-none overflow-hidden"
+            >
+              {`${editingTitle || ' '}\u00A0\u00A0`}
+            </span>
+            <input
+              ref={tabRenameInputRef}
+              type="text"
+              value={editingTitle}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              onBlur={handleFinishTabRename}
+              onKeyDown={handleTabRenameKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label="Renomear arquivo"
+              className="col-start-1 row-start-1 w-full min-w-0 select-text text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0 outline-none shadow-xs"
+            />
+          </div>
+        ) : (
+          <MiddleEllipsisText
+            text={tab.title}
+            showTooltip={false}
+            className="text-[11px] sm:text-xs max-w-[120px] sm:max-w-[180px] md:max-w-[240px]"
+          />
+        )}
+
+        <button
+          type="button"
+          onClick={(e) => onRequestCloseTab(e, tab)}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="w-3.5 h-3.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
+          title={tab.isDirty ? 'Fechar aba (alterações não salvas)' : 'Fechar aba'}
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  };
+
+  const activePopoverGroup = colorPickerPopover
+    ? tabGroups.find((g) => g.id === colorPickerPopover.groupId)
+    : null;
 
   return (
     <div className="h-7 sm:h-8 bg-slate-50/80 dark:bg-slate-950/40 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center px-3 py-0.5">
       <div className="flex-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 max-w-7xl mx-auto w-full">
         {segments.map((segment) => {
           if (segment.type === 'single') {
-            const tab = segment.tab;
-            const isActive = tab.id === activeTabId;
-            const isEditing = editingTabId === tab.id;
-            const isDropTarget = dropIndicator?.targetTabId === tab.id;
-
-            return (
-              <div
-                key={tab.id}
-                draggable={!isEditing}
-                onDragStart={(e) => {
-                  setDragSource({ type: 'tab', id: tab.id });
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.dataTransfer.setData('text/plain', tab.id);
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = 'move';
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const isAfter = e.clientX > rect.left + rect.width / 2;
-                  setDropIndicator({
-                    targetTabId: tab.id,
-                    position: isAfter ? 'after' : 'before',
-                  });
-                }}
-                onDragLeave={(e) => {
-                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-                  if (dropIndicator?.targetTabId === tab.id) {
-                    setDropIndicator(null);
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (!dragSource || !dropIndicator) return;
-                  if (dragSource.type === 'tab') {
-                    reorderTabs(dragSource.id, tab.id, dropIndicator.position, false);
-                  } else if (dragSource.type === 'group') {
-                    moveTabGroup(dragSource.id, tab.id, dropIndicator.position);
-                  }
-                  setDragSource(null);
-                  setDropIndicator(null);
-                }}
-                onDragEnd={() => {
-                  setDragSource(null);
-                  setDropIndicator(null);
-                }}
-                onClick={() => {
-                  if (!isEditing && !isActive) switchTab(tab.id);
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  if (!isEditing) handleStartTabRename(tab);
-                }}
-                onContextMenu={(e) => handleOpenTabContextMenu(e, tab)}
-                className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
-                  isDropTarget && dropIndicator.position === 'before'
-                    ? 'border-l-2 border-l-blue-500 pl-1.5'
-                    : ''
-                } ${
-                  isDropTarget && dropIndicator.position === 'after'
-                    ? 'border-r-2 border-r-blue-500 pr-1.5'
-                    : ''
-                } ${
-                  isActive || isEditing
-                    ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
-                }`}
-                title={`${tab.title} — Duplo clique para renomear, arraste para reordenar`}
-              >
-                {isEditing ? (
-                  <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">
-                    <span
-                      aria-hidden="true"
-                      className="invisible col-start-1 row-start-1 whitespace-pre text-[11px] sm:text-xs font-semibold px-1.5 py-0 border border-transparent pointer-events-none select-none overflow-hidden"
-                    >
-                      {`${editingTitle || ' '}\u00A0\u00A0`}
-                    </span>
-                    <input
-                      ref={tabRenameInputRef}
-                      type="text"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      onBlur={handleFinishTabRename}
-                      onKeyDown={handleTabRenameKeyDown}
-                      onClick={(e) => e.stopPropagation()}
-                      onDoubleClick={(e) => e.stopPropagation()}
-                      aria-label="Renomear arquivo"
-                      className="col-start-1 row-start-1 w-full min-w-0 select-text text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0 outline-none shadow-xs"
-                    />
-                  </div>
-                ) : (
-                  <MiddleEllipsisText
-                    text={tab.title}
-                    showTooltip={false}
-                    className="text-[11px] sm:text-xs max-w-[120px] sm:max-w-[180px] md:max-w-[240px]"
-                  />
-                )}
-
-                <button
-                  type="button"
-                  onClick={(e) => onRequestCloseTab(e, tab)}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                  className="w-3.5 h-3.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
-                  title={tab.isDirty ? 'Fechar aba (alterações não salvas)' : 'Fechar aba'}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            );
+            return renderTabPill(segment.tab);
           }
 
-          // Group segment
           const { group, tabs: groupTabs } = segment;
           const colorOption = getHighlightColorOption(group.color);
           const isGroupEditing = editingGroupId === group.id;
           const isCollapsed = Boolean(group.collapsed);
 
-          // If collapsed, only keep active tab visible if it is inside this group
           const visibleTabs = isCollapsed
             ? groupTabs.filter((t) => t.id === activeTabId)
             : groupTabs;
@@ -398,8 +545,9 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
                 chipDropTargetGroupId === group.id ? 'ring-2 ring-blue-500 bg-blue-50/30' : ''
               }`}
             >
-              {/* Group Chip / Header */}
+              {/* Clean Group Header Chip: [ ● Nome ] */}
               <div
+                data-group-chip-id={group.id}
                 draggable={!isGroupEditing}
                 onDragStart={(e) => {
                   setDragSource({ type: 'group', id: group.id });
@@ -420,15 +568,8 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
                   e.preventDefault();
                   e.stopPropagation();
                   setChipDropTargetGroupId(null);
-                  if (!dragSource) return;
-                  if (dragSource.type === 'tab') {
-                    assignTabToGroup(dragSource.id, group.id);
-                    updateTabGroup(group.id, { collapsed: false });
-                  } else if (dragSource.type === 'group' && dragSource.id !== group.id) {
-                    // Move group before the first tab of this group
-                    if (groupTabs.length > 0) {
-                      moveTabGroup(dragSource.id, groupTabs[0].id, 'before');
-                    }
+                  if (dragSource) {
+                    executeDropOnGroupChip(dragSource, group);
                   }
                   setDragSource(null);
                   setDropIndicator(null);
@@ -438,23 +579,48 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
                   setDropIndicator(null);
                   setChipDropTargetGroupId(null);
                 }}
+                onTouchStart={(e) =>
+                  handleTouchStartItem(e, { type: 'group', id: group.id }, isGroupEditing)
+                }
+                onTouchMove={handleTouchMoveItem}
+                onTouchEnd={handleTouchEndItem}
                 onClick={(e) => {
-                  if (!isGroupEditing) {
-                    e.stopPropagation();
-                    updateTabGroup(group.id, { collapsed: !isCollapsed });
+                  if (isGroupEditing) return;
+                  e.stopPropagation();
+                  // Delay single click slightly so double click can cancel it cleanly
+                  if (groupClickTimerRef.current) {
+                    clearTimeout(groupClickTimerRef.current);
                   }
+                  groupClickTimerRef.current = setTimeout(() => {
+                    groupClickTimerRef.current = null;
+                    updateTabGroup(group.id, { collapsed: !isCollapsed });
+                  }, 180);
                 }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   if (!isGroupEditing) handleStartGroupRename(group);
                 }}
-                onContextMenu={(e) => handleOpenGroupPopover(e, group)}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer select-none"
-                title={`${group.title} — Clique para recolher/expandir, duplo clique para renomear, botão direito para opções`}
+                className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer select-none"
+                title={`${group.title} — Toque na bolinha para cor/desagrupar, toque no nome para recolher, duplo toque para renomear`}
               >
-                {/* Dot with group highlight color */}
-                <span
-                  className={`w-2.5 h-2.5 rounded-full border ${colorOption.borderClass} ${colorOption.bgClass} shrink-0`}
+                {/* Color Dot: 1 tap opens the HighlightPopover pill */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (groupClickTimerRef.current) {
+                      clearTimeout(groupClickTimerRef.current);
+                      groupClickTimerRef.current = null;
+                    }
+                    if (colorPickerPopover?.groupId === group.id) {
+                      setColorPickerPopover(null);
+                    } else {
+                      openGroupColorPopoverAtElement(group.id, e.currentTarget);
+                    }
+                  }}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  title="Escolher cor da borda ou desfazer grupo"
+                  className={`w-3 h-3 rounded-full border ${colorOption.borderClass} ${colorOption.bgClass} transition-transform hover:scale-125 active:scale-95 shrink-0 cursor-pointer`}
                 />
 
                 {isGroupEditing ? (
@@ -470,162 +636,42 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
                     className="w-20 text-[11px] sm:text-xs font-semibold px-1 py-0 rounded border border-blue-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 outline-none"
                   />
                 ) : (
-                  <span className="text-[11px] sm:text-xs font-bold text-slate-700 dark:text-slate-200 max-w-[100px] truncate">
+                  <span className="text-[11px] sm:text-xs font-bold text-slate-700 dark:text-slate-200 max-w-[110px] truncate">
                     {group.title}
                   </span>
                 )}
 
-                {/* Collapsed tab count indicator */}
                 {isCollapsed && (
                   <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-400">
                     ({groupTabs.length})
                   </span>
                 )}
-
-                {/* Collapse / Expand chevron */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    updateTabGroup(group.id, { collapsed: !isCollapsed });
-                  }}
-                  className="w-3.5 h-3.5 p-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
-                  title={isCollapsed ? 'Expandir grupo' : 'Recolher grupo'}
-                >
-                  {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
-
-                {/* Palette button for quick menu */}
-                <button
-                  type="button"
-                  onClick={(e) => handleOpenGroupPopover(e, group)}
-                  className="w-3.5 h-3.5 p-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
-                  title="Configurar grupo e cor da borda"
-                >
-                  <Palette className="w-2.5 h-2.5" />
-                </button>
               </div>
 
-              {/* Group tabs */}
-              {visibleTabs.map((tab) => {
-                const isActive = tab.id === activeTabId;
-                const isEditing = editingTabId === tab.id;
-                const isDropTarget = dropIndicator?.targetTabId === tab.id;
-
-                return (
-                  <div
-                    key={tab.id}
-                    draggable={!isEditing}
-                    onDragStart={(e) => {
-                      setDragSource({ type: 'tab', id: tab.id });
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', tab.id);
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      e.dataTransfer.dropEffect = 'move';
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const isAfter = e.clientX > rect.left + rect.width / 2;
-                      setDropIndicator({
-                        targetTabId: tab.id,
-                        position: isAfter ? 'after' : 'before',
-                      });
-                    }}
-                    onDragLeave={(e) => {
-                      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-                      if (dropIndicator?.targetTabId === tab.id) {
-                        setDropIndicator(null);
-                      }
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (!dragSource || !dropIndicator) return;
-                      if (dragSource.type === 'tab') {
-                        reorderTabs(dragSource.id, tab.id, dropIndicator.position, true);
-                      } else if (dragSource.type === 'group') {
-                        moveTabGroup(dragSource.id, tab.id, dropIndicator.position);
-                      }
-                      setDragSource(null);
-                      setDropIndicator(null);
-                    }}
-                    onDragEnd={() => {
-                      setDragSource(null);
-                      setDropIndicator(null);
-                    }}
-                    onClick={() => {
-                      if (!isEditing && !isActive) switchTab(tab.id);
-                    }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      if (!isEditing) handleStartTabRename(tab);
-                    }}
-                    onContextMenu={(e) => handleOpenTabContextMenu(e, tab)}
-                    className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
-                      isDropTarget && dropIndicator.position === 'before'
-                        ? 'border-l-2 border-l-blue-500 pl-1.5'
-                        : ''
-                    } ${
-                      isDropTarget && dropIndicator.position === 'after'
-                        ? 'border-r-2 border-r-blue-500 pr-1.5'
-                        : ''
-                    } ${
-                      isActive || isEditing
-                        ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
-                    }`}
-                    title={`${tab.title} — Duplo clique para renomear, arraste para reordenar`}
-                  >
-                    {isEditing ? (
-                      <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">
-                        <span
-                          aria-hidden="true"
-                          className="invisible col-start-1 row-start-1 whitespace-pre text-[11px] sm:text-xs font-semibold px-1.5 py-0 border border-transparent pointer-events-none select-none overflow-hidden"
-                        >
-                          {`${editingTitle || ' '}\u00A0\u00A0`}
-                        </span>
-                        <input
-                          ref={tabRenameInputRef}
-                          type="text"
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          onBlur={handleFinishTabRename}
-                          onKeyDown={handleTabRenameKeyDown}
-                          onClick={(e) => e.stopPropagation()}
-                          onDoubleClick={(e) => e.stopPropagation()}
-                          aria-label="Renomear arquivo"
-                          className="col-start-1 row-start-1 w-full min-w-0 select-text text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0 outline-none shadow-xs"
-                        />
-                      </div>
-                    ) : (
-                      <MiddleEllipsisText
-                        text={tab.title}
-                        showTooltip={false}
-                        className="text-[11px] sm:text-xs max-w-[120px] sm:max-w-[180px] md:max-w-[240px]"
-                      />
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={(e) => onRequestCloseTab(e, tab)}
-                      onDoubleClick={(e) => e.stopPropagation()}
-                      className="w-3.5 h-3.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
-                      title={tab.isDirty ? 'Fechar aba (alterações não salvas)' : 'Fechar aba'}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                );
-              })}
+              {/* Group Tabs */}
+              {visibleTabs.map((tab) => renderTabPill(tab))}
             </div>
           );
         })}
 
-        {/* New Tab (+) Button */}
+        {/* New Tab (+) Button — also serves as drop target to pull a tab out of a group to the end */}
         <button
           type="button"
           onClick={onNewFile}
+          onDragOver={(e) => {
+            if (dragSource?.type === 'tab') {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }
+          }}
+          onDrop={(e) => {
+            if (dragSource?.type === 'tab') {
+              e.preventDefault();
+              assignTabToGroup(dragSource.id, null);
+              setDragSource(null);
+              setDropIndicator(null);
+            }
+          }}
           title="Nova aba (novo arquivo em branco)"
           className="w-6 h-6 rounded flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-purple-600 dark:hover:text-purple-400 transition-colors shrink-0 cursor-pointer ml-0.5"
         >
@@ -633,222 +679,31 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
         </button>
       </div>
 
-      {/* Tab Context Menu (Right Click on Tab) */}
-      {tabContextMenu && (() => {
-        const targetTab = tabs.find((t) => t.id === tabContextMenu.tabId);
-        if (!targetTab) return null;
-        const currentGroup = targetTab.groupId ? tabGroups.find((g) => g.id === targetTab.groupId) : null;
-        const otherGroups = tabGroups.filter((g) => g.id !== targetTab.groupId);
-
-        return (
-          <div
-            ref={tabContextMenuRef}
-            style={{ top: `${tabContextMenu.y}px`, left: `${tabContextMenu.x}px` }}
-            className="fixed z-50 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1.5 space-y-1 animate-in fade-in zoom-in-95 text-xs font-medium"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setTabContextMenu(null);
-                handleStartTabRename(targetTab);
-              }}
-              className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
-            >
-              <Pencil className="w-3.5 h-3.5 text-slate-400" />
-              Renomear
-            </button>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                setTabContextMenu(null);
-                onRequestCloseTab(e, targetTab);
-              }}
-              className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 text-red-600 dark:text-red-400 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-              Fechar aba
-            </button>
-
-            <div className="border-t border-slate-200 dark:border-slate-700 my-1" />
-
-            {/* Tab Group Section */}
-            {currentGroup ? (
-              <div className="space-y-1.5 py-0.5">
-                <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <span
-                    className={`w-2 h-2 rounded-full border ${getHighlightColorOption(currentGroup.color).borderClass} ${getHighlightColorOption(currentGroup.color).bgClass}`}
-                  />
-                  <span>Grupo: {currentGroup.title}</span>
-                </div>
-
-                <div className="px-2 py-1 bg-slate-50 dark:bg-slate-900/60 rounded-lg">
-                  <span className="block text-[10px] text-slate-400 mb-1">Mudar cor da borda:</span>
-                  <HighlightColorSwatches
-                    activeColor={currentGroup.color}
-                    onSelectColor={(color) => {
-                      updateTabGroup(currentGroup.id, { color });
-                      setTabContextMenu(null);
-                    }}
-                    titlePrefix="Mudar cor do grupo para"
-                    size="sm"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTabContextMenu(null);
-                    handleStartGroupRename(currentGroup);
-                  }}
-                  className="w-full px-2 py-1 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer text-xs"
-                >
-                  <Pencil className="w-3 h-3 text-slate-400" />
-                  Renomear grupo
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    assignTabToGroup(targetTab.id, null);
-                    setTabContextMenu(null);
-                  }}
-                  className="w-full px-2 py-1 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer text-xs"
-                >
-                  <FolderMinus className="w-3 h-3 text-slate-400" />
-                  Remover do grupo
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    ungroupTabs(currentGroup.id);
-                    setTabContextMenu(null);
-                  }}
-                  className="w-full px-2 py-1 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-amber-600 dark:text-amber-400 cursor-pointer text-xs"
-                >
-                  <FolderMinus className="w-3 h-3 text-amber-500" />
-                  Desagrupar tudo
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-1.5 py-0.5">
-                <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Novo grupo com esta aba
-                </div>
-                <div className="px-2 py-1 bg-slate-50 dark:bg-slate-900/60 rounded-lg">
-                  <HighlightColorSwatches
-                    onSelectColor={(color: HighlightColor) => {
-                      createTabGroup([targetTab.id], { color, title: 'Grupo' });
-                      setTabContextMenu(null);
-                    }}
-                    titlePrefix="Criar grupo com borda"
-                    size="sm"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Move to another existing group */}
-            {otherGroups.length > 0 && (
-              <div className="pt-1 border-t border-slate-100 dark:border-slate-700/60 space-y-0.5">
-                <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Mover para grupo...
-                </div>
-                {otherGroups.map((g) => {
-                  const cOpt = getHighlightColorOption(g.color);
-                  return (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => {
-                        assignTabToGroup(targetTab.id, g.id);
-                        updateTabGroup(g.id, { collapsed: false });
-                        setTabContextMenu(null);
-                      }}
-                      className="w-full px-2 py-1 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer text-xs"
-                    >
-                      <span className={`w-2.5 h-2.5 rounded-full border ${cOpt.borderClass} ${cOpt.bgClass} shrink-0`} />
-                      <span className="truncate">{g.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* Group Popover / Context Menu */}
-      {groupPopover && (() => {
-        const group = tabGroups.find((g) => g.id === groupPopover.groupId);
-        if (!group) return null;
-
-        return (
-          <div
-            ref={groupPopoverRef}
-            style={{ top: `${groupPopover.y}px`, left: `${groupPopover.x}px` }}
-            className="fixed z-50 w-60 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-2.5 space-y-2.5 animate-in fade-in zoom-in-95 text-xs font-medium"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Quick Title Edit */}
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                Nome do Grupo
-              </label>
-              <input
-                type="text"
-                value={group.title}
-                onChange={(e) => updateTabGroup(group.id, { title: e.target.value })}
-                className="w-full px-2 py-1 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 outline-none focus:border-blue-500"
-                placeholder="Nome do grupo..."
-              />
-            </div>
-
-            {/* Border Color Swatches */}
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                Cor da Borda
-              </label>
-              <div className="p-1.5 bg-slate-50 dark:bg-slate-900/60 rounded-lg flex items-center justify-center">
-                <HighlightColorSwatches
-                  activeColor={group.color}
-                  onSelectColor={(color) => updateTabGroup(group.id, { color })}
-                  titlePrefix="Cor da borda:"
-                  size="sm"
-                />
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 dark:border-slate-700 pt-1 space-y-1">
-              <button
-                type="button"
-                onClick={() => {
-                  handleNewTabInGroup(group.id);
-                  setGroupPopover(null);
-                }}
-                className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer text-xs"
-              >
-                <FolderPlus className="w-3.5 h-3.5 text-purple-500" />
-                Nova aba no grupo
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  ungroupTabs(group.id);
-                  setGroupPopover(null);
-                }}
-                className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 text-red-600 dark:text-red-400 cursor-pointer text-xs"
-              >
-                <FolderMinus className="w-3.5 h-3.5" />
-                Desagrupar abas
-              </button>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Reused HighlightPopover Pill for Group Color Selection & Ungrouping */}
+      {colorPickerPopover && activePopoverGroup && (
+        <div
+          ref={popoverContainerRef}
+          style={{
+            position: 'fixed',
+            top: `${colorPickerPopover.y}px`,
+            left: `${colorPickerPopover.x}px`,
+            transform: 'translateX(-50%)',
+          }}
+          className="z-50 animate-in fade-in zoom-in-95 duration-150"
+        >
+          <HighlightPopover
+            activeColor={activePopoverGroup.color}
+            onSelectColor={(color: HighlightColor) => {
+              updateTabGroup(activePopoverGroup.id, { color });
+            }}
+            onRemoveHighlight={() => {
+              ungroupTabs(activePopoverGroup.id);
+              setColorPickerPopover(null);
+            }}
+            onClose={() => setColorPickerPopover(null)}
+          />
+        </div>
+      )}
     </div>
   );
 };
