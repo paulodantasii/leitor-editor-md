@@ -311,3 +311,153 @@ describe('Modo Código-Fonte (isSourceMode): Exclusividade Mútua e Ciclo de Vid
     expect(useAppStore.getState().isSourceMode).toBe(false);
   });
 });
+
+describe('Reordenação de Abas e Grupos de Abas com Cores', () => {
+  beforeEach(() => {
+    useAppStore.getState().closeDocument();
+  });
+
+  it('reordena abas horizontalmente (before e after) preservando activeTabId, document e snapshots', () => {
+    const tab1Id = useAppStore.getState().openTab({ title: 'Aba 1.md', content: '# Conteúdo 1' });
+    const tab2Id = useAppStore.getState().openTab({ title: 'Aba 2.md', content: '# Conteúdo 2' });
+    const tab3Id = useAppStore.getState().openTab({ title: 'Aba 3.md', content: '# Conteúdo 3' });
+
+    // Foca na Aba 2
+    useAppStore.getState().switchTab(tab2Id);
+    expect(useAppStore.getState().activeTabId).toBe(tab2Id);
+    expect(useAppStore.getState().document?.title).toBe('Aba 2.md');
+
+    let currentTabs = useAppStore.getState().tabs;
+    expect(currentTabs.map((t) => t.id)).toEqual([tab1Id, tab2Id, tab3Id]);
+
+    // Move Aba 3 para antes de Aba 1
+    useAppStore.getState().reorderTabs(tab3Id, tab1Id, 'before');
+    currentTabs = useAppStore.getState().tabs;
+    expect(currentTabs.map((t) => t.id)).toEqual([tab3Id, tab1Id, tab2Id]);
+
+    // activeTabId e documento ativo continuam sendo Aba 2
+    expect(useAppStore.getState().activeTabId).toBe(tab2Id);
+    expect(useAppStore.getState().document?.title).toBe('Aba 2.md');
+
+    // Move Aba 1 para depois de Aba 2
+    useAppStore.getState().reorderTabs(tab1Id, tab2Id, 'after');
+    currentTabs = useAppStore.getState().tabs;
+    expect(currentTabs.map((t) => t.id)).toEqual([tab3Id, tab2Id, tab1Id]);
+
+    // Reordenar mesma aba sobre ela mesma não altera nada
+    useAppStore.getState().reorderTabs(tab2Id, tab2Id, 'before');
+    expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab3Id, tab2Id, tab1Id]);
+  });
+
+  it('cria grupo com cor da paleta de grifos, associa abas informadas e mantém contiguidade', () => {
+    const tabAId = useAppStore.getState().openTab({ title: 'A.md', content: 'A' });
+    const tabBId = useAppStore.getState().openTab({ title: 'B.md', content: 'B' });
+    const tabCId = useAppStore.getState().openTab({ title: 'C.md', content: 'C' });
+    const tabDId = useAppStore.getState().openTab({ title: 'D.md', content: 'D' });
+
+    // Inicialmente: [A, B, C, D]. Cria grupo com A e C (não adjacentes)
+    const groupId = useAppStore.getState().createTabGroup([tabAId, tabCId], {
+      title: 'Projeto Alpha',
+      color: 'purple',
+    });
+
+    expect(groupId).toBeTruthy();
+    const state = useAppStore.getState();
+    expect(state.tabGroups).toHaveLength(1);
+    expect(state.tabGroups[0]).toEqual({
+      id: groupId,
+      title: 'Projeto Alpha',
+      color: 'purple',
+      collapsed: false,
+    });
+
+    // Abas do grupo A e C devem ficar contíguas: [A, C, B, D]
+    expect(state.tabs.map((t) => t.id)).toEqual([tabAId, tabCId, tabBId, tabDId]);
+    expect(state.tabs.find((t) => t.id === tabAId)?.groupId).toBe(groupId);
+    expect(state.tabs.find((t) => t.id === tabCId)?.groupId).toBe(groupId);
+    expect(state.tabs.find((t) => t.id === tabBId)?.groupId).toBeNull();
+  });
+
+  it('altera cor da borda e título do grupo e persiste na sessão do localStorage', () => {
+    const tab1Id = useAppStore.getState().openTab({ title: 'Item 1.md', content: '1' });
+    const tab2Id = useAppStore.getState().openTab({ title: 'Item 2.md', content: '2' });
+
+    const groupId = useAppStore.getState().createTabGroup([tab1Id, tab2Id], {
+      title: 'Inicial',
+      color: 'yellow',
+    });
+
+    // Atualiza título, cor e status recolhido
+    useAppStore.getState().updateTabGroup(groupId, {
+      title: 'Estudos Atualizados',
+      color: 'green',
+      collapsed: true,
+    });
+
+    const updatedGroup = useAppStore.getState().tabGroups.find((g) => g.id === groupId);
+    expect(updatedGroup).toBeDefined();
+    expect(updatedGroup?.title).toBe('Estudos Atualizados');
+    expect(updatedGroup?.color).toBe('green');
+    expect(updatedGroup?.collapsed).toBe(true);
+
+    // Verifica persistência no localStorage
+    const savedRaw = localStorage.getItem('leitor_md_open_tabs_v1');
+    expect(savedRaw).not.toBeNull();
+    const saved = JSON.parse(savedRaw!);
+    expect(saved.groups).toHaveLength(1);
+    expect(saved.groups[0].title).toBe('Estudos Atualizados');
+    expect(saved.groups[0].color).toBe('green');
+    expect(saved.groups[0].collapsed).toBe(true);
+    expect(saved.tabs[0].groupId).toBe(groupId);
+  });
+
+  it('adiciona aba a grupo existente, remove aba com poda automática e desagrupa tudo', () => {
+    const tab1Id = useAppStore.getState().openTab({ title: 'T1.md', content: '1' });
+    const tab2Id = useAppStore.getState().openTab({ title: 'T2.md', content: '2' });
+    const tab3Id = useAppStore.getState().openTab({ title: 'T3.md', content: '3' });
+
+    const groupId = useAppStore.getState().createTabGroup([tab1Id], { title: 'Único', color: 'orange' });
+    expect(useAppStore.getState().tabGroups).toHaveLength(1);
+
+    // Adiciona tab2Id ao grupo
+    useAppStore.getState().assignTabToGroup(tab2Id, groupId);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab2Id)?.groupId).toBe(groupId);
+
+    // Remove tab2Id do grupo
+    useAppStore.getState().assignTabToGroup(tab2Id, null);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab2Id)?.groupId).toBeNull();
+    expect(useAppStore.getState().tabGroups).toHaveLength(1);
+
+    // Remove última aba do grupo (tab1Id) -> grupo órfão deve ser podado automaticamente
+    useAppStore.getState().assignTabToGroup(tab1Id, null);
+    expect(useAppStore.getState().tabGroups).toHaveLength(0);
+
+    // Testa ungroupTabs
+    const newGroupId = useAppStore.getState().createTabGroup([tab2Id, tab3Id], { title: 'Dupla', color: 'blue' });
+    expect(useAppStore.getState().tabGroups).toHaveLength(1);
+    useAppStore.getState().ungroupTabs(newGroupId);
+    expect(useAppStore.getState().tabGroups).toHaveLength(0);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab2Id)?.groupId).toBeNull();
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab3Id)?.groupId).toBeNull();
+  });
+
+  it('moveTabGroup move todas as abas do grupo juntas em bloco', () => {
+    const tabAId = useAppStore.getState().openTab({ title: 'A.md', content: 'A' });
+    const tabBId = useAppStore.getState().openTab({ title: 'B.md', content: 'B' });
+    const tabCId = useAppStore.getState().openTab({ title: 'C.md', content: 'C' });
+    const tabDId = useAppStore.getState().openTab({ title: 'D.md', content: 'D' });
+
+    // Cria grupo com [A, B]: lista [A, B, C, D]
+    const gId = useAppStore.getState().createTabGroup([tabAId, tabBId], { title: 'Bloco AB', color: 'red' });
+
+    // Move grupo para DEPOIS de D
+    useAppStore.getState().moveTabGroup(gId, tabDId, 'after');
+    let tabs = useAppStore.getState().tabs.map((t) => t.id);
+    expect(tabs).toEqual([tabCId, tabDId, tabAId, tabBId]);
+
+    // Move grupo para ANTES de C
+    useAppStore.getState().moveTabGroup(gId, tabCId, 'before');
+    tabs = useAppStore.getState().tabs.map((t) => t.id);
+    expect(tabs).toEqual([tabAId, tabBId, tabCId, tabDId]);
+  });
+});

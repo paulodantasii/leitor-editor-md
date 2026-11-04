@@ -12,6 +12,52 @@ export const HIGHLIGHT_COLORS: HighlightColorOption[] = [
   { id: 'gray', name: 'Cinza', bgClass: 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-300', borderClass: 'border-slate-400', hex: '#cbd5e1' },
 ];
 
+export function getHighlightColorOption(color?: HighlightColor | null): HighlightColorOption {
+  return HIGHLIGHT_COLORS.find((c) => c.id === color) || HIGHLIGHT_COLORS[0];
+}
+
+interface HighlightColorSwatchesProps {
+  activeColor?: HighlightColor;
+  onSelectColor: (color: HighlightColor) => void;
+  titlePrefix?: string;
+  size?: 'sm' | 'md';
+}
+
+export const HighlightColorSwatches: React.FC<HighlightColorSwatchesProps> = ({
+  activeColor,
+  onSelectColor,
+  titlePrefix = 'Grifar de',
+  size = 'md',
+}) => {
+  const sizeClass = size === 'sm' ? 'w-5 h-5' : 'w-6 h-6';
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {HIGHLIGHT_COLORS.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSelectColor(c.id);
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSelectColor(c.id);
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          title={`${titlePrefix} ${c.name}`}
+          className={`${sizeClass} rounded-full border ${c.borderClass} transition-transform hover:scale-110 active:scale-95 cursor-pointer ${c.bgClass} ${
+            activeColor === c.id ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-800 scale-110' : ''
+          }`}
+        />
+      ))}
+    </div>
+  );
+};
+
 interface HighlightPopoverProps {
   activeColor?: HighlightColor;
   onSelectColor: (color: HighlightColor) => void;
@@ -34,29 +80,16 @@ export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
         e.stopPropagation();
       }}
     >
-      <div className="flex items-center gap-1.5 pr-2 border-r border-slate-200 dark:border-slate-700">
-        {HIGHLIGHT_COLORS.map((c) => (
-          <button
-            key={c.id}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onClose();
-              onSelectColor(c.id);
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onClose();
-              onSelectColor(c.id);
-            }}
-            onMouseDown={(e) => e.preventDefault()}
-            title={`Grifar de ${c.name}`}
-            className={`w-6 h-6 rounded-full transition-transform hover:scale-110 active:scale-95 ${c.bgClass} ${
-              activeColor === c.id ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-800 scale-110' : ''
-            }`}
-          />
-        ))}
+      <div className="pr-2 border-r border-slate-200 dark:border-slate-700">
+        <HighlightColorSwatches
+          activeColor={activeColor}
+          onSelectColor={(color) => {
+            onClose();
+            onSelectColor(color);
+          }}
+          titlePrefix="Grifar de"
+          size="md"
+        />
       </div>
 
       <button

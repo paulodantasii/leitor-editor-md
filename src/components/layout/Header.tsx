@@ -17,10 +17,8 @@ import {
   MoreVertical,
   WifiOff,
   FilePlus,
-  Pencil,
   History,
   X,
-  Plus,
 } from 'lucide-react';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveActiveDocument } from '../../services/documentSaveService';
@@ -28,7 +26,7 @@ import { SaveDestinationModal } from '../modals/SaveDestinationModal';
 import { saveCoordinator } from '../../services/saveCoordinator';
 import { TabItem } from '../../types';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
-import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
+import { TabBar } from './TabBar';
 
 export const Header: React.FC = () => {
   const hasDocument = useAppStore((state) => Boolean(state.document));
@@ -51,7 +49,6 @@ export const Header: React.FC = () => {
     openTab,
     switchTab,
     closeTab,
-    renameTab,
     fileHandle,
     setFileHandle,
     isHighlightMode,
@@ -78,7 +75,6 @@ export const Header: React.FC = () => {
       openTab: state.openTab,
       switchTab: state.switchTab,
       closeTab: state.closeTab,
-      renameTab: state.renameTab,
       fileHandle: state.fileHandle,
       setFileHandle: state.setFileHandle,
       isHighlightMode: state.isHighlightMode,
@@ -137,15 +133,7 @@ export const Header: React.FC = () => {
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  // Tab renaming state
-  const [editingTabId, setEditingTabId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState('');
-  const tabRenameInputRef = useRef<HTMLInputElement>(null);
-  const isCancelingRenameRef = useRef(false);
 
-  // Tab context menu state
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
-  const tabContextMenuRef = useRef<HTMLDivElement>(null);
 
   // Guard action & tab closure confirmation state
   const [unsavedModalAction, setUnsavedModalAction] = useState<GuardActionType | null>(null);
@@ -170,90 +158,7 @@ export const Header: React.FC = () => {
     };
   }, [isExportMenuOpen, isMobileMenuOpen]);
 
-  // Close Tab Context Menu when clicking outside or pressing Escape
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (tabContextMenuRef.current && !tabContextMenuRef.current.contains(e.target as Node)) {
-        setTabContextMenu(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setTabContextMenu(null);
-      }
-    };
-    if (tabContextMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleKeyDown);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [tabContextMenu]);
 
-  // Inline tab rename triggers
-  const handleStartTabRename = (tab: TabItem) => {
-    isCancelingRenameRef.current = false;
-    setEditingTabId(tab.id);
-    setEditingTitle(tab.title);
-    setTimeout(() => {
-      const inputEl = tabRenameInputRef.current;
-      if (inputEl) {
-        inputEl.focus();
-        const dotIndex = tab.title.lastIndexOf('.');
-        if (dotIndex > 0) {
-          inputEl.setSelectionRange(0, dotIndex);
-        } else {
-          inputEl.select();
-        }
-        inputEl.scrollLeft = 0;
-        inputEl.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-      }
-    }, 30);
-  };
-
-  const handleFinishTabRename = () => {
-    if (isCancelingRenameRef.current) {
-      isCancelingRenameRef.current = false;
-      return;
-    }
-    if (editingTabId) {
-      const targetTabId = editingTabId;
-      const prevTitle = tabs.find((t) => t.id === targetTabId)?.title;
-      setEditingTabId(null);
-      renameTab(targetTabId, editingTitle);
-
-      // Se renomeou a aba ativa conectada ao OneDrive, dispara salvamento imediato para atualizar o nome na nuvem
-      const freshState = useAppStore.getState();
-      if (
-        targetTabId === freshState.activeTabId &&
-        freshState.document?.oneDriveItemId &&
-        freshState.document.title !== prevTitle
-      ) {
-        saveCoordinator.save({ interactive: false });
-      }
-    }
-  };
-
-  const handleTabRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleFinishTabRename();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      isCancelingRenameRef.current = true;
-      setEditingTabId(null);
-    }
-  };
-
-  const handleOpenTabContextMenu = (e: React.MouseEvent, tab: TabItem) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const x = Math.min(e.clientX, window.innerWidth - 170);
-    const y = e.clientY + 8;
-    setTabContextMenu({ x, y, tabId: tab.id });
-  };
 
   // Monitor online status for sync resilience
   useEffect(() => {
@@ -888,125 +793,12 @@ export const Header: React.FC = () => {
         <div aria-hidden="true" className="min-w-0" />
       </div>
 
-      {/* LINHA 2: Barra Fina de Abas Estilo Navegador */}
+      {/* LINHA 2: Barra de Abas com Suporte a Drag & Drop e Grupos */}
       {tabs.length > 0 && (
-        <div className="h-7 sm:h-8 bg-slate-50/80 dark:bg-slate-950/40 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center px-3 py-0.5">
-          <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5 max-w-7xl mx-auto w-full">
-            {tabs.map((tab) => {
-              const isActive = tab.id === activeTabId;
-              const isEditing = editingTabId === tab.id;
-
-              return (
-                <div
-                  key={tab.id}
-                  onClick={() => {
-                    if (!isEditing && !isActive) switchTab(tab.id);
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    if (!isEditing) {
-                      handleStartTabRename(tab);
-                    }
-                  }}
-                  onContextMenu={(e) => handleOpenTabContextMenu(e, tab)}
-                  className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
-                    isActive || isEditing
-                      ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
-                  }`}
-                  title={`${tab.title} — Duplo clique para renomear`}
-                >
-                  {/* Nome da aba ou input inline de renomeação com expansão automática */}
-                  {isEditing ? (
-                    <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">
-                      <span
-                        aria-hidden="true"
-                        className="invisible col-start-1 row-start-1 whitespace-pre text-[11px] sm:text-xs font-semibold px-1.5 py-0 border border-transparent pointer-events-none select-none overflow-hidden"
-                      >
-                        {`${editingTitle || ' '}\u00A0\u00A0`}
-                      </span>
-                      <input
-                        ref={tabRenameInputRef}
-                        type="text"
-                        value={editingTitle}
-                        onChange={(e) => setEditingTitle(e.target.value)}
-                        onBlur={handleFinishTabRename}
-                        onKeyDown={handleTabRenameKeyDown}
-                        onClick={(e) => e.stopPropagation()}
-                        onDoubleClick={(e) => e.stopPropagation()}
-                        aria-label="Renomear arquivo"
-                        className="col-start-1 row-start-1 w-full min-w-0 select-text text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0 outline-none shadow-xs"
-                      />
-                    </div>
-                  ) : (
-                    <MiddleEllipsisText
-                      text={tab.title}
-                      showTooltip={false}
-                      className="text-[11px] sm:text-xs max-w-[120px] sm:max-w-[180px] md:max-w-[240px]"
-                    />
-                  )}
-
-                  {/* Botão Fechar Aba (X) com fechamento inteligente */}
-                  <button
-                    type="button"
-                    onClick={(e) => handleCloseTabClick(e, tab)}
-                    onDoubleClick={(e) => e.stopPropagation()}
-                    className="w-3.5 h-3.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
-                    title={tab.isDirty ? 'Fechar aba (alterações não salvas)' : 'Fechar aba'}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              );
-            })}
-
-            {/* Botão + (Nova Aba) */}
-            <button
-              type="button"
-              onClick={handleNewFile}
-              title="Nova aba (novo arquivo em branco)"
-              className="w-6 h-6 rounded flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-purple-600 dark:hover:text-purple-400 transition-colors shrink-0 cursor-pointer ml-0.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Menu de Contexto Flutuante para Abas (Clique Direito) */}
-      {tabContextMenu && (
-        <div
-          ref={tabContextMenuRef}
-          style={{ top: `${tabContextMenu.y}px`, left: `${tabContextMenu.x}px` }}
-          className="fixed z-50 w-36 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1 space-y-0.5 animate-in fade-in zoom-in-95 text-xs font-medium"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const tab = tabs.find((t) => t.id === tabContextMenu.tabId);
-              setTabContextMenu(null);
-              if (tab) handleStartTabRename(tab);
-            }}
-            className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
-          >
-            <Pencil className="w-3.5 h-3.5 text-slate-400" />
-            Renomear
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              const tab = tabs.find((t) => t.id === tabContextMenu.tabId);
-              setTabContextMenu(null);
-              if (tab) handleCloseTabClick(e, tab);
-            }}
-            className="w-full px-2 py-1.5 text-left rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 text-red-600 dark:text-red-400 cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-            Fechar aba
-          </button>
-        </div>
+        <TabBar
+          onRequestCloseTab={handleCloseTabClick}
+          onNewFile={handleNewFile}
+        />
       )}
 
       {/* Modal de confirmação inteligente ao fechar documento/aba com alterações não salvas */}

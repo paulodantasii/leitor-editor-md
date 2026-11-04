@@ -7,7 +7,7 @@ import {
   UserProfile,
   RecentDocumentItem,
   TabItem,
-  OpenTabsSession,
+  TabGroup,
 } from '../types';
 import {
   loadUserPreferences,
@@ -39,10 +39,17 @@ interface AppState {
   // Tab Management
   tabs: TabItem[];
   activeTabId: string | null;
+  tabGroups: TabGroup[];
   openTab: (doc: Partial<DocumentState> & { title: string; content?: string }, fileHandle?: any) => string;
   switchTab: (tabId: string) => Promise<void>;
   closeTab: (tabId: string, forceWithoutSaving?: boolean) => void;
   renameTab: (tabId: string, newTitle: string) => void;
+  reorderTabs: (sourceTabId: string, targetTabId: string, position?: 'before' | 'after', adoptTargetGroup?: boolean) => void;
+  moveTabGroup: (groupId: string, targetTabId: string, position?: 'before' | 'after') => void;
+  createTabGroup: (tabIds: string[], options?: { title?: string; color?: HighlightColor }) => string;
+  assignTabToGroup: (tabId: string, groupId: string | null) => void;
+  updateTabGroup: (groupId: string, patch: Partial<Pick<TabGroup, 'title' | 'color' | 'collapsed'>>) => void;
+  ungroupTabs: (groupId: string) => void;
 
   // Editor Modes
   isHighlightMode: boolean;
@@ -107,6 +114,45 @@ interface AppState {
 
 const initialPreferences = loadUserPreferences();
 
+const pruneOrphanGroups = (tabs: TabItem[], groups: TabGroup[]): TabGroup[] => {
+  const usedGroupIds = new Set(tabs.map((t) => t.groupId).filter(Boolean));
+  return groups.filter((g) => usedGroupIds.has(g.id));
+};
+
+const normalizeGroupContiguity = (tabs: TabItem[]): TabItem[] => {
+  const seenGroups = new Set<string>();
+  const result: TabItem[] = [];
+
+  for (const tab of tabs) {
+    if (!tab.groupId) {
+      result.push(tab);
+      continue;
+    }
+    if (seenGroups.has(tab.groupId)) {
+      continue;
+    }
+    seenGroups.add(tab.groupId);
+    const groupMembers = tabs.filter((t) => t.groupId === tab.groupId);
+    result.push(...groupMembers);
+  }
+  return result;
+};
+
+const persistTabsSession = (activeTabId: string | null, tabs: TabItem[], groups: TabGroup[]) => {
+  saveOpenTabsSession({
+    activeTabId,
+    tabs: tabs.map((t) => ({
+      id: t.id,
+      title: t.title,
+      docId: t.docId,
+      oneDriveItemId: t.oneDriveItemId || null,
+      isDirty: t.isDirty,
+      groupId: t.groupId ?? null,
+    })),
+    groups,
+  });
+};
+
 const getInitialDoc = (): DocumentState | null => {
   const cached = loadLocalDocument();
   // Ignora (e descarta) "Sem Título.md" em branco herdado de versões antigas
@@ -150,6 +196,7 @@ if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
       docId: t.docId,
       oneDriveItemId: t.oneDriveItemId,
       fileHandle: isCurActive && initialDoc ? initialDoc.fileHandle || null : null,
+      groupId: t.groupId ?? null,
       snapshot: isCurActive && initialDoc ? initialDoc : undefined,
     };
   });
@@ -163,11 +210,15 @@ if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
       docId: initialDoc.docId || 'doc-initial',
       oneDriveItemId: initialDoc.oneDriveItemId,
       fileHandle: initialDoc.fileHandle || null,
+      groupId: null,
       snapshot: initialDoc,
     },
   ];
   initialActiveTabId = tabId;
 }
+
+const initialTabGroups: TabGroup[] = savedSession?.groups ? pruneOrphanGroups(initialTabs, savedSession.groups) : [];
+initialTabs = normalizeGroupContiguity(initialTabs);
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Preferences
@@ -183,6 +234,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Tab Management
   tabs: initialTabs,
   activeTabId: initialActiveTabId,
+  tabGroups: initialTabGroups,
 
   openTab: (doc, fileHandle) => {
     const state = get();
@@ -262,16 +314,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         cloudConflict: null,
       });
       saveLocalDocument(updatedDoc);
-      saveOpenTabsSession({
-        activeTabId: state.activeTabId,
-        tabs: updatedTabs.map((t) => ({
-          id: t.id,
-          title: t.title,
-          docId: t.docId,
-          oneDriveItemId: t.oneDriveItemId || null,
-          isDirty: t.isDirty,
-        })),
-      });
+      persistTabsSession(state.activeTabId, updatedTabs, state.tabGroups);
       return state.activeTabId;
     }
 
@@ -290,6 +333,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       docId: targetDocId,
       oneDriveItemId: newDoc.oneDriveItemId,
       fileHandle: newDoc.fileHandle,
+      groupId: null,
       snapshot: newDoc,
     };
 
@@ -319,16 +363,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     saveLocalDocument(newDoc);
-    saveOpenTabsSession({
-      activeTabId: tabId,
-      tabs: nextTabs.map((t) => ({
-        id: t.id,
-        title: t.title,
-        docId: t.docId,
-        oneDriveItemId: t.oneDriveItemId || null,
-        isDirty: t.isDirty,
-      })),
-    });
+    persistTabsSession(tabId, nextTabs, state.tabGroups);
 
     return tabId;
   },
@@ -421,16 +456,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     saveLocalDocument(targetDoc);
-    saveOpenTabsSession({
-      activeTabId: tabId,
-      tabs: finalTabs.map((t) => ({
-        id: t.id,
-        title: t.title,
-        docId: t.docId,
-        oneDriveItemId: t.oneDriveItemId || null,
-        isDirty: t.isDirty,
-      })),
-    });
+    persistTabsSession(tabId, finalTabs, state.tabGroups);
   },
 
   closeTab: (tabId: string, forceWithoutSaving?: boolean) => {
@@ -451,6 +477,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         tabs: [],
         activeTabId: null,
+        tabGroups: [],
         document: null,
         fileHandle: null,
         isEditable: false,
@@ -463,6 +490,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       return;
     }
+
+    const nextGroups = pruneOrphanGroups(remainingTabs, state.tabGroups);
 
     if (state.activeTabId === tabId) {
       const nextIndex = tabIndex < remainingTabs.length ? tabIndex : remainingTabs.length - 1;
@@ -483,6 +512,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         tabs: remainingTabs,
         activeTabId: nextTab.id,
+        tabGroups: nextGroups,
         document: nextDoc,
         fileHandle: nextTab.fileHandle || null,
         syncStatus: nextDoc.isDirty ? 'idle' : 'saved',
@@ -491,28 +521,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
 
       saveLocalDocument(nextDoc);
-      saveOpenTabsSession({
-        activeTabId: nextTab.id,
-        tabs: remainingTabs.map((t) => ({
-          id: t.id,
-          title: t.title,
-          docId: t.docId,
-          oneDriveItemId: t.oneDriveItemId || null,
-          isDirty: t.isDirty,
-        })),
-      });
+      persistTabsSession(nextTab.id, remainingTabs, nextGroups);
     } else {
-      set({ tabs: remainingTabs });
-      saveOpenTabsSession({
-        activeTabId: state.activeTabId,
-        tabs: remainingTabs.map((t) => ({
-          id: t.id,
-          title: t.title,
-          docId: t.docId,
-          oneDriveItemId: t.oneDriveItemId || null,
-          isDirty: t.isDirty,
-        })),
-      });
+      set({ tabs: remainingTabs, tabGroups: nextGroups });
+      persistTabsSession(state.activeTabId, remainingTabs, nextGroups);
     }
   },
 
@@ -610,16 +622,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               };
             });
             set({ tabs: currentTabs });
-            saveOpenTabsSession({
-              activeTabId: get().activeTabId,
-              tabs: currentTabs.map((t) => ({
-                id: t.id,
-                title: t.title,
-                docId: t.docId,
-                oneDriveItemId: t.oneDriveItemId || null,
-                isDirty: t.isDirty,
-              })),
-            });
+            persistTabsSession(get().activeTabId, currentTabs, get().tabGroups);
             const savedSnap = currentTabs.find((t) => t.id === tabId)?.snapshot;
             if (savedSnap) {
               const list = await saveRecentDocument(savedSnap);
@@ -632,16 +635,173 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
-    saveOpenTabsSession({
-      activeTabId: state.activeTabId,
-      tabs: nextTabs.map((t) => ({
-        id: t.id,
-        title: t.title,
-        docId: t.docId,
-        oneDriveItemId: t.oneDriveItemId || null,
-        isDirty: t.isDirty,
-      })),
-    });
+    persistTabsSession(state.activeTabId, nextTabs, state.tabGroups);
+  },
+
+  reorderTabs: (sourceTabId: string, targetTabId: string, position: 'before' | 'after' = 'before', adoptTargetGroup = false) => {
+    if (sourceTabId === targetTabId) return;
+    const state = get();
+    const sourceTab = state.tabs.find((t) => t.id === sourceTabId);
+    const targetTab = state.tabs.find((t) => t.id === targetTabId);
+    if (!sourceTab || !targetTab) return;
+
+    const withoutSource = state.tabs.filter((t) => t.id !== sourceTabId);
+    const targetIdx = withoutSource.findIndex((t) => t.id === targetTabId);
+    if (targetIdx === -1) return;
+
+    const insertIndex = position === 'after' ? targetIdx + 1 : targetIdx;
+
+    let nextGroupId: string | null = sourceTab.groupId ?? null;
+    if (adoptTargetGroup) {
+      nextGroupId = targetTab.groupId ?? null;
+    } else if (sourceTab.groupId !== targetTab.groupId) {
+      if (sourceTab.groupId) {
+        const prevNeighbor = withoutSource[insertIndex - 1];
+        const nextNeighbor = withoutSource[insertIndex];
+        const isAdjacentToOriginalGroup =
+          (prevNeighbor && prevNeighbor.groupId === sourceTab.groupId) ||
+          (nextNeighbor && nextNeighbor.groupId === sourceTab.groupId);
+
+        if (!isAdjacentToOriginalGroup) {
+          nextGroupId = targetTab.groupId ?? null;
+        }
+      }
+    }
+
+    const movedTab: TabItem = { ...sourceTab, groupId: nextGroupId };
+    const rawNextTabs = [
+      ...withoutSource.slice(0, insertIndex),
+      movedTab,
+      ...withoutSource.slice(insertIndex),
+    ];
+
+    const nextTabs = normalizeGroupContiguity(rawNextTabs);
+    const nextGroups = pruneOrphanGroups(nextTabs, state.tabGroups);
+
+    set({ tabs: nextTabs, tabGroups: nextGroups });
+    persistTabsSession(state.activeTabId, nextTabs, nextGroups);
+  },
+
+  moveTabGroup: (groupId: string, targetTabId: string, position: 'before' | 'after' = 'before') => {
+    const state = get();
+    const targetTab = state.tabs.find((t) => t.id === targetTabId);
+    if (!targetTab || targetTab.groupId === groupId) return;
+
+    const groupTabs = state.tabs.filter((t) => t.groupId === groupId);
+    if (groupTabs.length === 0) return;
+
+    const remaining = state.tabs.filter((t) => t.groupId !== groupId);
+    let anchorIndex = remaining.findIndex((t) => t.id === targetTabId);
+    if (anchorIndex === -1) return;
+
+    if (targetTab.groupId) {
+      const otherGroupId = targetTab.groupId;
+      if (position === 'before') {
+        const firstIdx = remaining.findIndex((t) => t.groupId === otherGroupId);
+        if (firstIdx !== -1) anchorIndex = firstIdx;
+      } else {
+        const lastIdx = remaining.map((t) => t.groupId).lastIndexOf(otherGroupId);
+        if (lastIdx !== -1) anchorIndex = lastIdx;
+      }
+    }
+
+    const insertIndex = position === 'after' ? anchorIndex + 1 : anchorIndex;
+    const rawNextTabs = [
+      ...remaining.slice(0, insertIndex),
+      ...groupTabs,
+      ...remaining.slice(insertIndex),
+    ];
+
+    const nextTabs = normalizeGroupContiguity(rawNextTabs);
+    set({ tabs: nextTabs });
+    persistTabsSession(state.activeTabId, nextTabs, state.tabGroups);
+  },
+
+  createTabGroup: (tabIds: string[], options?: { title?: string; color?: HighlightColor }) => {
+    const state = get();
+    const validIds = new Set(tabIds.filter((id) => state.tabs.some((t) => t.id === id)));
+    if (validIds.size === 0) return '';
+
+    const groupId = 'group-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+    const color: HighlightColor = options?.color || state.activeHighlightColor || 'yellow';
+    const title = options?.title?.trim() || 'Grupo';
+    const newGroup: TabGroup = { id: groupId, title, color, collapsed: false };
+
+    const firstIndex = state.tabs.findIndex((t) => validIds.has(t.id));
+    const tabsInGroup = state.tabs
+      .filter((t) => validIds.has(t.id))
+      .map((t) => ({ ...t, groupId }));
+    const tabsNotInGroup = state.tabs.filter((t) => !validIds.has(t.id));
+
+    const tabsBeforeFirst = state.tabs.slice(0, firstIndex).filter((t) => !validIds.has(t.id));
+    const insertIdx = tabsBeforeFirst.length;
+
+    const rawNextTabs = [
+      ...tabsNotInGroup.slice(0, insertIdx),
+      ...tabsInGroup,
+      ...tabsNotInGroup.slice(insertIdx),
+    ];
+
+    const nextTabs = normalizeGroupContiguity(rawNextTabs);
+    const nextGroups = pruneOrphanGroups(nextTabs, [...state.tabGroups, newGroup]);
+
+    set({ tabs: nextTabs, tabGroups: nextGroups });
+    persistTabsSession(state.activeTabId, nextTabs, nextGroups);
+    return groupId;
+  },
+
+  assignTabToGroup: (tabId: string, groupId: string | null) => {
+    const state = get();
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+
+    if (groupId === null) {
+      const updatedTabs = state.tabs.map((t) => (t.id === tabId ? { ...t, groupId: null } : t));
+      const nextTabs = normalizeGroupContiguity(updatedTabs);
+      const nextGroups = pruneOrphanGroups(nextTabs, state.tabGroups);
+      set({ tabs: nextTabs, tabGroups: nextGroups });
+      persistTabsSession(state.activeTabId, nextTabs, nextGroups);
+      return;
+    }
+
+    const groupExists = state.tabGroups.some((g) => g.id === groupId);
+    if (!groupExists) return;
+
+    const withoutTab = state.tabs.filter((t) => t.id !== tabId);
+    const lastGroupTabIndex = withoutTab.map((t) => t.groupId).lastIndexOf(groupId);
+    const updatedTab: TabItem = { ...tab, groupId };
+
+    let nextRawTabs: TabItem[];
+    if (lastGroupTabIndex !== -1) {
+      nextRawTabs = [
+        ...withoutTab.slice(0, lastGroupTabIndex + 1),
+        updatedTab,
+        ...withoutTab.slice(lastGroupTabIndex + 1),
+      ];
+    } else {
+      nextRawTabs = [...withoutTab, updatedTab];
+    }
+
+    const nextTabs = normalizeGroupContiguity(nextRawTabs);
+    const nextGroups = pruneOrphanGroups(nextTabs, state.tabGroups);
+
+    set({ tabs: nextTabs, tabGroups: nextGroups });
+    persistTabsSession(state.activeTabId, nextTabs, nextGroups);
+  },
+
+  updateTabGroup: (groupId: string, patch: Partial<Pick<TabGroup, 'title' | 'color' | 'collapsed'>>) => {
+    const state = get();
+    const nextGroups = state.tabGroups.map((g) => (g.id === groupId ? { ...g, ...patch } : g));
+    set({ tabGroups: nextGroups });
+    persistTabsSession(state.activeTabId, state.tabs, nextGroups);
+  },
+
+  ungroupTabs: (groupId: string) => {
+    const state = get();
+    const nextTabs = state.tabs.map((t) => (t.groupId === groupId ? { ...t, groupId: null } : t));
+    const nextGroups = state.tabGroups.filter((g) => g.id !== groupId);
+    set({ tabs: nextTabs, tabGroups: nextGroups });
+    persistTabsSession(state.activeTabId, nextTabs, nextGroups);
   },
 
   // Highlight & Editing Mode (Mutually exclusive: enabling Editing mode automatically disables Highlight mode)
@@ -752,32 +912,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           docId: updated.docId || 'doc-initial',
           oneDriveItemId: updated.oneDriveItemId,
           fileHandle: state.fileHandle,
+          groupId: null,
           snapshot: updated,
         };
         updatedTabs = [newTab];
-        saveOpenTabsSession({
-          activeTabId: newTabId,
-          tabs: updatedTabs.map((t) => ({
-            id: t.id,
-            title: t.title,
-            docId: t.docId,
-            oneDriveItemId: t.oneDriveItemId || null,
-            isDirty: t.isDirty,
-          })),
-        });
+        persistTabsSession(newTabId, updatedTabs, state.tabGroups);
         return { document: updated, tabs: updatedTabs, activeTabId: newTabId };
       }
 
-      saveOpenTabsSession({
-        activeTabId: state.activeTabId,
-        tabs: updatedTabs.map((t) => ({
-          id: t.id,
-          title: t.title,
-          docId: t.docId,
-          oneDriveItemId: t.oneDriveItemId || null,
-          isDirty: t.isDirty,
-        })),
-      });
+      persistTabsSession(state.activeTabId, updatedTabs, state.tabGroups);
 
       return { document: updated, tabs: updatedTabs };
     });
@@ -805,16 +948,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           : t
       );
 
-      saveOpenTabsSession({
-        activeTabId: state.activeTabId,
-        tabs: updatedTabs.map((t) => ({
-          id: t.id,
-          title: t.title,
-          docId: t.docId,
-          oneDriveItemId: t.oneDriveItemId || null,
-          isDirty: t.isDirty,
-        })),
-      });
+      persistTabsSession(state.activeTabId, updatedTabs, state.tabGroups);
 
       return { document: updated, tabs: updatedTabs };
     });
@@ -849,6 +983,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       tabs: [],
       activeTabId: null,
+      tabGroups: [],
       document: null,
       fileHandle: null,
       isEditable: false,

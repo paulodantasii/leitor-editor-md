@@ -44,6 +44,13 @@ export interface DocumentState {
   fileHandle?: any;
 }
 
+export interface TabGroup {
+  id: string;
+  title: string;
+  color: HighlightColor;
+  collapsed?: boolean;
+}
+
 export interface TabItem {
   id: string; // Identificador único da aba (UUID)
   title: string;
@@ -51,6 +58,7 @@ export interface TabItem {
   docId: string;
   oneDriveItemId?: string | null;
   fileHandle?: any | null;
+  groupId?: string | null;
   snapshot?: DocumentState; // Snapshot completo do documento quando a aba está inativa
 }
 
@@ -62,7 +70,9 @@ export interface OpenTabsSession {
     docId: string;
     oneDriveItemId: string | null;
     isDirty: boolean;
+    groupId?: string | null;
   }>;
+  groups?: TabGroup[];
 }
 
 export interface OneDriveItem {
