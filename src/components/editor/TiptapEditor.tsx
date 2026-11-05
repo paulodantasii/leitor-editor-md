@@ -29,6 +29,36 @@ import {
   hasPendingBridgeChanges,
 } from '../../services/editorContentBridge';
 import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
+import {
+  generateNextHighlightId,
+  registerScrollToLatestHighlightHandler,
+  scrollToLatestHighlightInContainer,
+  scanHighlightsInMarkdown,
+} from '../../services/highlightIdService';
+import {
+  extractHeadingsFromProseMirrorDoc,
+  extractHeadingsFromMarkdown,
+  findActiveHeadingIndexByTops,
+  getStickyTopOffsetPx,
+  updateTocState,
+  resetTocState,
+  registerNavigateToHeadingHandler,
+  pulseHeadingElement,
+} from '../../services/tocService';
+import {
+  ScrollSyncAnchor,
+  captureVisualScrollAnchor,
+  captureSourceScrollAnchor,
+  resolveSourceTargetScrollY,
+  resolveVisualTargetScrollY,
+  measureMultipleTextareaOffsetsTopPx,
+  measureTextareaOffsetTopPx,
+} from '../../services/sourceScrollSyncService';
+import { saveTabScrollPosition } from '../../services/tabScrollMemory';
+import {
+  detectNextCaseCycleMode,
+  createCaseTransformTransaction,
+} from '../../services/textTransformService';
 
 /**
  * Conta grifos (<mark ...>) diretamente no Markdown bruto quando em Modo Código-Fonte.
@@ -81,6 +111,8 @@ export const TiptapEditor: React.FC = () => {
   const markdownDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const markdownIdleCallbackRef = useRef<number | null>(null);
   const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const tocExtractTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const tocScrollRafRef = useRef<number | null>(null);
 
   // Estado e refs do Modo Código-Fonte (Markdown puro)
   const [rawContent, setRawContent] = useState<string>(() => useAppStore.getState().document?.content || '');
@@ -116,6 +148,7 @@ export const TiptapEditor: React.FC = () => {
   const editorRef = useRef<Editor | null>(null);
   const scheduleDebouncedContentRef = useRef<() => void>(() => {});
   const postponePendingContentFlushRef = useRef<() => void>(() => {});
+  const scheduleDebouncedTocRefreshRef = useRef<(ed: Editor | null) => void>(() => {});
 
   // High-performance highlight counting directly from in-memory ProseMirror doc tree
   const updateHighlightCount = useCallback(
@@ -237,6 +270,7 @@ export const TiptapEditor: React.FC = () => {
     onUpdate: ({ transaction }) => {
       if (!transaction.docChanged) return;
       scheduleDebouncedContentRef.current();
+      scheduleDebouncedTocRefreshRef.current(editorRef.current);
     },
     onSelectionUpdate: ({ editor: currentEditor }) => {
       if (!currentEditor) return;
@@ -259,7 +293,10 @@ export const TiptapEditor: React.FC = () => {
         highlightTimeoutRef.current = setTimeout(() => {
           const currentSel = currentEditor.state.selection;
           if (currentSel.from !== currentSel.to) {
-            const uniqueId = Math.random().toString(36).substring(2, 6);
+            const uniqueId = generateNextHighlightId(
+              currentEditor.state.doc,
+              useAppStore.getState().document?.docId
+            );
 
             setPopoverOpen(false);
 
@@ -375,6 +412,77 @@ export const TiptapEditor: React.FC = () => {
   scheduleDebouncedContentRef.current = scheduleDebouncedContent;
   postponePendingContentFlushRef.current = postponePendingContentFlush;
 
+  const computeActiveHeadingInDom = useCallback(
+    (headingsCount: number): number => {
+      if (headingsCount === 0) return -1;
+
+      const thresholdY = getStickyTopOffsetPx() + 8;
+
+      // Quando em Modo Código-Fonte (textarea visível), mede a posição Y real de cada título no textarea
+      if (isSourceModeRef.current && rawTextareaRef.current) {
+        const textarea = rawTextareaRef.current;
+        const rect = textarea.getBoundingClientRect();
+        const md = rawContentRef.current;
+        const mdHeadings = extractHeadingsFromMarkdown(md);
+        if (mdHeadings.length === 0) return -1;
+
+        const charOffsets = mdHeadings.map((h) => h.charOffset ?? 0);
+        const localTops = measureMultipleTextareaOffsetsTopPx(textarea, md, charOffsets);
+        const estimatedTops = localTops.map((localY) => rect.top + localY);
+        return findActiveHeadingIndexByTops(estimatedTops, thresholdY);
+      }
+
+      const container = containerRef.current;
+      if (!container) return 0;
+
+      const domHeadings = container.querySelectorAll(
+        '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'
+      );
+      if (domHeadings.length === 0) return 0;
+
+      const tops: number[] = [];
+      for (let i = 0; i < domHeadings.length; i++) {
+        const el = domHeadings[i] as HTMLElement;
+        // Ignora headings vazios para manter paridade 1:1 com extractHeadingsFromProseMirrorDoc
+        if ((el.textContent || '').trim().length > 0) {
+          tops.push(el.getBoundingClientRect().top);
+        }
+      }
+
+      return findActiveHeadingIndexByTops(tops, thresholdY);
+    },
+    []
+  );
+
+  const refreshTocStructure = useCallback(
+    (ed: Editor | null) => {
+      const headings = isSourceModeRef.current
+        ? extractHeadingsFromMarkdown(rawContentRef.current)
+        : ed && !ed.isDestroyed
+        ? extractHeadingsFromProseMirrorDoc(ed.state.doc)
+        : [];
+
+      const activeIdx = computeActiveHeadingInDom(headings.length);
+      updateTocState(headings, activeIdx);
+    },
+    [computeActiveHeadingInDom]
+  );
+
+  const scheduleDebouncedTocRefresh = useCallback(
+    (ed: Editor | null) => {
+      if (tocExtractTimerRef.current) {
+        clearTimeout(tocExtractTimerRef.current);
+      }
+      tocExtractTimerRef.current = setTimeout(() => {
+        tocExtractTimerRef.current = null;
+        refreshTocStructure(ed);
+      }, 250);
+    },
+    [refreshTocStructure]
+  );
+
+  scheduleDebouncedTocRefreshRef.current = scheduleDebouncedTocRefresh;
+
   // Register bridge flush handler & window lifecycle guards (background/close)
   useEffect(() => {
     const unregister = registerEditorFlushHandler(() => {
@@ -402,6 +510,15 @@ export const TiptapEditor: React.FC = () => {
       if (highlightCountDebounceTimerRef.current) {
         clearTimeout(highlightCountDebounceTimerRef.current);
       }
+      if (tocExtractTimerRef.current) {
+        clearTimeout(tocExtractTimerRef.current);
+        tocExtractTimerRef.current = null;
+      }
+      if (tocScrollRafRef.current !== null) {
+        cancelAnimationFrame(tocScrollRafRef.current);
+        tocScrollRafRef.current = null;
+      }
+      resetTocState();
     };
   }, [flushContent, clearPendingContentTimers]);
 
@@ -425,12 +542,16 @@ export const TiptapEditor: React.FC = () => {
     if (!nextContent) {
       editor.commands.clearContent(false);
       updateHighlightCount(editor);
+      refreshTocStructure(editor);
       return;
     }
 
     editor.commands.setContent(nextContent, false);
     updateHighlightCount(editor);
-  }, [docId, editor, updateHighlightCount]);
+    requestAnimationFrame(() => {
+      refreshTocStructure(editor);
+    });
+  }, [docId, editor, updateHighlightCount, refreshTocStructure]);
 
   // Escuta atualizações externas de conteúdo na mesma aba (ex.: resolução de conflito ou sync silencioso do OneDrive)
   useEffect(() => {
@@ -451,21 +572,60 @@ export const TiptapEditor: React.FC = () => {
       if (currentEditor && !currentEditor.isDestroyed) {
         currentEditor.commands.setContent(nextDoc.content, false);
         updateHighlightCount(currentEditor);
+        requestAnimationFrame(() => {
+          refreshTocStructure(currentEditor);
+        });
+      } else if (isSourceModeRef.current) {
+        refreshTocStructure(null);
       }
     });
     return unsubscribe;
-  }, [updateHighlightCount]);
+  }, [updateHighlightCount, refreshTocStructure]);
 
-  // Gerencia a transição sem perda entre Editor Visual <-> Modo Código-Fonte
+  const lastScrollSyncAnchorRef = useRef<ScrollSyncAnchor | null>(null);
+  const isTransitioningSourceModeRef = useRef<boolean>(false);
+
+  const captureCurrentScrollAnchorSnapshot = useCallback((): ScrollSyncAnchor => {
+    if (isSourceModeRef.current && rawTextareaRef.current) {
+      return captureSourceScrollAnchor(rawTextareaRef.current, rawContentRef.current);
+    }
+    const md =
+      lastEmittedMarkdownRef.current ??
+      useAppStore.getState().document?.content ??
+      '';
+    return captureVisualScrollAnchor(containerRef.current, md);
+  }, []);
+
+  const handleToggleSourceModeWithScrollSync = useCallback(() => {
+    if (hasPendingBridgeChanges()) {
+      flushContent();
+    }
+    lastScrollSyncAnchorRef.current = captureCurrentScrollAnchorSnapshot();
+    toggleSourceMode();
+  }, [captureCurrentScrollAnchorSnapshot, flushContent, toggleSourceMode]);
+
+  // Gerencia a transição sem perda (conteúdo + posição vertical) entre Editor Visual <-> Modo Código-Fonte
   useEffect(() => {
     const wasSourceMode = prevIsSourceModeRef.current;
     prevIsSourceModeRef.current = isSourceMode;
 
     if (wasSourceMode === isSourceMode) return;
 
+    const anchorToRestore: ScrollSyncAnchor =
+      lastScrollSyncAnchorRef.current ?? {
+        isAtVeryTop: window.scrollY <= 4,
+        isAtVeryBottom: false,
+        headingIndex: -1,
+        segmentProgress: 0,
+        globalProgress: 0,
+        markdownCharOffset: 0,
+      };
+
+    isTransitioningSourceModeRef.current = true;
+    document.documentElement.classList.add('scroll-restoring');
+
     if (isSourceMode) {
       // Transição: Visual -> Código-Fonte
-      // Se havia digitação pendente no ProseMirror, força o flush antes de abrir o Código-Fonte
       if (hasPendingBridgeChanges()) {
         flushContent();
       }
@@ -476,16 +636,46 @@ export const TiptapEditor: React.FC = () => {
       setRawContent(latestMarkdown);
       setPopoverOpen(false);
 
-      requestAnimationFrame(() => {
+      const raf1 = requestAnimationFrame(() => {
         const el = rawTextareaRef.current;
         if (el) {
-          const savedScrollY = window.scrollY;
           el.style.height = 'auto';
           el.style.height = `${Math.max(el.scrollHeight, 480)}px`;
-          window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+
+          const targetScrollY = resolveSourceTargetScrollY(
+            el,
+            latestMarkdown,
+            anchorToRestore
+          );
+          window.scrollTo({ top: targetScrollY, left: 0, behavior: 'instant' });
+
+          // Posiciona o cursor no charOffset correspondente sem causar salto de scroll
+          if (typeof anchorToRestore.markdownCharOffset === 'number') {
+            const safeCaret = Math.min(
+              latestMarkdown.length,
+              Math.max(0, anchorToRestore.markdownCharOffset)
+            );
+            el.setSelectionRange(safeCaret, safeCaret);
+          }
           el.focus({ preventScroll: true });
+
+          const state = useAppStore.getState();
+          if (state.activeTabId && state.document?.docId) {
+            saveTabScrollPosition(state.activeTabId, window.scrollY, state.document.docId);
+          }
         }
+
+        document.documentElement.classList.remove('scroll-restoring');
+        isTransitioningSourceModeRef.current = false;
+        lastScrollSyncAnchorRef.current = captureCurrentScrollAnchorSnapshot();
+        refreshTocStructure(null);
       });
+
+      return () => {
+        cancelAnimationFrame(raf1);
+        document.documentElement.classList.remove('scroll-restoring');
+        isTransitioningSourceModeRef.current = false;
+      };
     } else {
       // Transição: Código-Fonte -> Visual (ou saída para Modo Leitura / Grifar)
       if (hasPendingBridgeChanges()) {
@@ -500,12 +690,46 @@ export const TiptapEditor: React.FC = () => {
         updateHighlightCount(editor);
         isRawDirtyRef.current = false;
       }
-    }
-  }, [isSourceMode, editor, flushContent, setPopoverOpen, updateHighlightCount]);
 
-  // Ajusta a altura do textarea automaticamente preservando a rolagem da janela
+      const raf1 = requestAnimationFrame(() => {
+        const container = containerRef.current;
+        if (container) {
+          const targetScrollY = resolveVisualTargetScrollY(container, anchorToRestore);
+          window.scrollTo({ top: targetScrollY, left: 0, behavior: 'instant' });
+
+          const state = useAppStore.getState();
+          if (state.activeTabId && state.document?.docId) {
+            saveTabScrollPosition(state.activeTabId, window.scrollY, state.document.docId);
+          }
+        }
+
+        document.documentElement.classList.remove('scroll-restoring');
+        isTransitioningSourceModeRef.current = false;
+        lastScrollSyncAnchorRef.current = captureCurrentScrollAnchorSnapshot();
+        refreshTocStructure(editor);
+      });
+
+      return () => {
+        cancelAnimationFrame(raf1);
+        document.documentElement.classList.remove('scroll-restoring');
+        isTransitioningSourceModeRef.current = false;
+      };
+    }
+  }, [
+    isSourceMode,
+    editor,
+    flushContent,
+    setPopoverOpen,
+    updateHighlightCount,
+    refreshTocStructure,
+    captureCurrentScrollAnchorSnapshot,
+  ]);
+
+  // Ajusta a altura do textarea automaticamente enquanto o usuário edita no Modo Código-Fonte,
+  // sem interferir quando a transição inicial de modo estiver posicionando o scroll.
   useEffect(() => {
     if (!isSourceMode) return;
+    if (isTransitioningSourceModeRef.current) return;
     const el = rawTextareaRef.current;
     if (!el) return;
     const isRestoringTabScroll = document.documentElement.classList.contains('scroll-restoring');
@@ -534,22 +758,165 @@ export const TiptapEditor: React.FC = () => {
     return () => window.removeEventListener('beforeprint', handleBeforePrint);
   }, [editor, flushContent]);
 
-  // Atalho de teclado Ctrl+; (ou Cmd+;) para alternar o Modo Código-Fonte quando em Modo Edição
+  // Atalhos de teclado quando em Modo Edição:
+  // - Ctrl+; (ou Cmd+;): alternar Modo Código-Fonte
+  // - Shift+F3: alternar ciclicamente Maiúsculas / Minúsculas / Capitalização (estilo Word)
   useEffect(() => {
     if (!isEditable) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === ';') {
         e.preventDefault();
-        toggleSourceMode();
+        handleToggleSourceModeWithScrollSync();
+        return;
+      }
+
+      if (isSourceModeRef.current) return;
+      if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'F3') {
+        const currentEditor = editorRef.current;
+        if (!currentEditor || currentEditor.isDestroyed) return;
+        const { from, to, empty } = currentEditor.state.selection;
+        if (!empty && from !== to) {
+          e.preventDefault();
+          const selectedText = currentEditor.state.doc.textBetween(from, to, ' ');
+          const nextMode = detectNextCaseCycleMode(selectedText);
+          const tr = createCaseTransformTransaction(currentEditor.state, nextMode);
+          if (tr) {
+            currentEditor.view.dispatch(tr);
+          }
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isEditable, toggleSourceMode]);
+  }, [isEditable, handleToggleSourceModeWithScrollSync]);
 
   // Preserva a posição de leitura (scroll) independente por aba.
   // Deve ficar APÓS o efeito de setContent acima (ordem de efeitos do React).
-  useTabScrollRestoration(editor);
+  useTabScrollRestoration(editor, containerRef);
+
+  // Registra o comando de rolar até o grifo mais recente (acionado pelo Header ou tecla J)
+  useEffect(() => {
+    const unregister = registerScrollToLatestHighlightHandler(() => {
+      if (isSourceModeRef.current && rawTextareaRef.current) {
+        const md = rawContentRef.current;
+        const summary = scanHighlightsInMarkdown(md);
+        const targetId = summary.latestSequentialId || summary.latestLegacyId;
+        if (!targetId) return;
+
+        const escapedId = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`<mark\\b[^>]*\\b(?:data-id|data-hl-id|id)=["']${escapedId}["'][^>]*>`, 'i');
+        const match = regex.exec(md);
+        if (match && typeof match.index === 'number') {
+          const textarea = rawTextareaRef.current;
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(match.index, match.index + match[0].length);
+          const ratio = md.length > 0 ? match.index / md.length : 0;
+          const rect = textarea.getBoundingClientRect();
+          const estimatedY = Math.max(0, rect.top + window.scrollY + textarea.scrollHeight * ratio - window.innerHeight * 0.3);
+          window.scrollTo({ top: estimatedY, left: 0, behavior: 'smooth' });
+        }
+        return;
+      }
+
+      scrollToLatestHighlightInContainer(containerRef.current, editorRef.current, {
+        behavior: 'smooth',
+        pulse: true,
+      });
+    });
+
+    return unregister;
+  }, []);
+
+  // Sincroniza o título ativo no sumário e breadcrumb em tempo real durante a rolagem da página (Scroll-Spy)
+  useEffect(() => {
+    const handleScrollOrResize = () => {
+      if (tocScrollRafRef.current !== null) return;
+      tocScrollRafRef.current = requestAnimationFrame(() => {
+        tocScrollRafRef.current = null;
+        if (!isTransitioningSourceModeRef.current) {
+          lastScrollSyncAnchorRef.current = captureCurrentScrollAnchorSnapshot();
+        }
+        const ed = editorRef.current;
+        const headings = isSourceModeRef.current
+          ? extractHeadingsFromMarkdown(rawContentRef.current)
+          : ed && !ed.isDestroyed
+          ? extractHeadingsFromProseMirrorDoc(ed.state.doc)
+          : [];
+        if (headings.length === 0) return;
+        const activeIdx = computeActiveHeadingInDom(headings.length);
+        updateTocState(headings, activeIdx);
+      });
+    };
+
+    window.addEventListener('scroll', handleScrollOrResize, { passive: true });
+    window.addEventListener('resize', handleScrollOrResize, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize);
+      window.removeEventListener('resize', handleScrollOrResize);
+      if (tocScrollRafRef.current !== null) {
+        cancelAnimationFrame(tocScrollRafRef.current);
+        tocScrollRafRef.current = null;
+      }
+    };
+  }, [computeActiveHeadingInDom, captureCurrentScrollAnchorSnapshot]);
+
+  // Registra o comando de navegação rápida para um título ao clicar no Sumário (TOC Popover)
+  useEffect(() => {
+    const unregister = registerNavigateToHeadingHandler((headingIndex: number) => {
+      const stickyOffset = getStickyTopOffsetPx();
+
+      // Caso 1: Modo Código-Fonte (textarea)
+      if (isSourceModeRef.current && rawTextareaRef.current) {
+        const md = rawContentRef.current;
+        const mdHeadings = extractHeadingsFromMarkdown(md);
+        const target = mdHeadings[headingIndex];
+        if (!target) return;
+
+        const charPos = target.charOffset ?? 0;
+        const textarea = rawTextareaRef.current;
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(charPos, charPos);
+
+        const localY = measureTextareaOffsetTopPx(textarea, md, charPos);
+        const rect = textarea.getBoundingClientRect();
+        const targetY = Math.max(
+          0,
+          Math.round(rect.top + window.scrollY + localY - stickyOffset - 12)
+        );
+        window.scrollTo({ top: targetY, left: 0, behavior: 'smooth' });
+        updateTocState(mdHeadings, headingIndex);
+        return;
+      }
+
+      // Caso 2: Editor Visual / Modo Leitura (.ProseMirror)
+      const container = containerRef.current;
+      if (!container) return;
+
+      const domHeadings = Array.from(
+        container.querySelectorAll(
+          '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'
+        )
+      ).filter((el) => (el.textContent || '').trim().length > 0) as HTMLElement[];
+
+      const targetEl = domHeadings[headingIndex];
+      if (!targetEl) return;
+
+      const rect = targetEl.getBoundingClientRect();
+      const rawTargetY = rect.top + window.scrollY - stickyOffset - 8;
+      const maxScrollY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const targetScrollY = Math.max(0, Math.min(Math.round(rawTargetY), maxScrollY));
+
+      window.scrollTo({
+        top: targetScrollY,
+        left: 0,
+        behavior: 'smooth',
+      });
+
+      pulseHeadingElement(targetEl);
+    });
+
+    return unregister;
+  }, []);
 
   // Update editor editable mode
   useEffect(() => {
@@ -568,18 +935,25 @@ export const TiptapEditor: React.FC = () => {
 
       const target = e.target as HTMLElement;
 
-      // Ignore touches/clicks inside the popover UI or on existing marks
-      if (target?.closest('[data-highlight-popover]') || target?.closest('mark')) {
+      // Ignora toques/cliques no próprio popover; só ignora <mark> quando não há seleção de texto (clique simples)
+      if (target?.closest('[data-highlight-popover]')) {
         return;
       }
 
       const { from, to } = editor.state.selection;
+      if (from === to && target?.closest('mark')) {
+        return;
+      }
+
       if (from !== to) {
         if (highlightTimeoutRef.current) {
           clearTimeout(highlightTimeoutRef.current);
         }
 
-        const uniqueId = Math.random().toString(36).substring(2, 6);
+        const uniqueId = generateNextHighlightId(
+          editor.state.doc,
+          useAppStore.getState().document?.docId
+        );
 
         setPopoverOpen(false);
 
@@ -816,7 +1190,10 @@ export const TiptapEditor: React.FC = () => {
       tr.setSelection(TextSelection.create(tr.doc, safePos));
       editor.view.dispatch(tr);
     } else {
-      const newId = Math.random().toString(36).substring(2, 6);
+      const newId = generateNextHighlightId(
+        editor.state.doc,
+        useAppStore.getState().document?.docId
+      );
       editor
         .chain()
         .setCustomHighlight({ color, id: newId })
@@ -886,6 +1263,7 @@ export const TiptapEditor: React.FC = () => {
     isRawDirtyRef.current = true;
     setRawContent(nextValue);
     scheduleDebouncedContent();
+    scheduleDebouncedTocRefresh(editorRef.current);
   };
 
   const handleRawTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -901,6 +1279,7 @@ export const TiptapEditor: React.FC = () => {
       isRawDirtyRef.current = true;
       setRawContent(nextVal);
       scheduleDebouncedContent();
+      scheduleDebouncedTocRefresh(editorRef.current);
 
       requestAnimationFrame(() => {
         if (rawTextareaRef.current) {
@@ -929,7 +1308,7 @@ export const TiptapEditor: React.FC = () => {
         <EditorToolbar
           editor={editor}
           isSourceMode={isSourceMode}
-          onToggleSourceMode={toggleSourceMode}
+          onToggleSourceMode={handleToggleSourceModeWithScrollSync}
         />
       )}
 

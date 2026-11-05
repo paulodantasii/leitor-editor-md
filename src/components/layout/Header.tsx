@@ -6,6 +6,7 @@ import { UnsavedChangesModal, GuardActionType } from '../modals/UnsavedChangesMo
 import { downloadMarkdownFile, printDocument } from '../../services/exportService';
 import {
   Highlighter,
+  LocateFixed,
   Edit3,
   BookOpen,
   Save,
@@ -15,6 +16,7 @@ import {
   WifiOff,
   Settings,
 } from 'lucide-react';
+import { requestScrollToLatestHighlight } from '../../services/highlightIdService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveActiveDocument } from '../../services/documentSaveService';
 import { SaveDestinationModal } from '../modals/SaveDestinationModal';
@@ -22,6 +24,7 @@ import { saveCoordinator } from '../../services/saveCoordinator';
 import { TabItem } from '../../types';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
 import { TabBar } from './TabBar';
+import { DocumentOutlineBar } from './DocumentOutlineBar';
 
 export const Header: React.FC = () => {
   const hasDocument = useAppStore((state) => Boolean(state.document));
@@ -112,7 +115,7 @@ export const Header: React.FC = () => {
       ro?.disconnect();
       window.removeEventListener('resize', updateHeaderHeight);
     };
-  }, [tabs.length]);
+  }, [tabs.length, hasDocument]);
 
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -401,26 +404,46 @@ export const Header: React.FC = () => {
         <div className="flex items-center justify-end gap-1.5 sm:gap-2 shrink-0 ml-auto">
           {hasDocument && (
             <>
-              {/* Modo Grifar (Toggle Button + Badge) */}
-              <button
-                onClick={toggleHighlightMode}
-                className={`px-2.5 sm:px-3 h-8 rounded-xl font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
-                  isHighlightMode
-                    ? 'bg-amber-500 text-white shadow-sm font-semibold'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
-                title="Ativar/Desativar Modo Grifar (Atalho: tecla G)"
-              >
-                <Highlighter className="w-4 h-4" />
-                <span className="hidden md:inline">Grifar</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                    isHighlightMode ? 'bg-amber-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+              {/* Modo Grifar (Toggle Button + Badge) + Botão Ir para o Grifo Mais Recente */}
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  onClick={toggleHighlightMode}
+                  className={`px-2.5 sm:px-3 h-8 ${
+                    highlightCount > 0 ? 'rounded-l-xl rounded-r-md' : 'rounded-xl'
+                  } font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                    isHighlightMode
+                      ? 'bg-amber-500 text-white shadow-sm font-semibold'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                   }`}
+                  title="Ativar/Desativar Modo Grifar (Atalho: tecla G)"
                 >
-                  {highlightCount}
-                </span>
-              </button>
+                  <Highlighter className="w-4 h-4" />
+                  <span className="hidden md:inline">Grifar</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      isHighlightMode ? 'bg-amber-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {highlightCount}
+                  </span>
+                </button>
+
+                {highlightCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={requestScrollToLatestHighlight}
+                    title="Ir para o grifo mais recente (Atalho: tecla J)"
+                    aria-label="Ir para o grifo mais recente"
+                    className={`h-8 px-2 rounded-r-xl rounded-l-md flex items-center justify-center transition-all shrink-0 cursor-pointer ${
+                      isHighlightMode
+                        ? 'bg-amber-500/90 hover:bg-amber-600 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-100 dark:hover:bg-slate-700 hover:text-amber-700 dark:hover:text-amber-300'
+                    }`}
+                  >
+                    <LocateFixed className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
               {/* Modo Leitura / Edição Segmented Switch */}
               <div
@@ -554,6 +577,9 @@ export const Header: React.FC = () => {
           }}
         />
       )}
+
+      {/* LINHA 3: Mapa / Breadcrumb de Localização Contextual por Títulos (H1 > H2 > H3) */}
+      {hasDocument && <DocumentOutlineBar />}
 
       {/* Modal de confirmação inteligente ao fechar documento/aba com alterações não salvas */}
       <UnsavedChangesModal

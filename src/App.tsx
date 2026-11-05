@@ -16,6 +16,7 @@ import { saveActiveDocument } from './services/documentSaveService';
 import { initAutoUpdateListeners } from './services/appUpdateService';
 
 import { HomeScreen } from './components/home/HomeScreen';
+import { requestScrollToLatestHighlight } from './services/highlightIdService';
 
 export const App: React.FC = () => {
   const theme = useAppStore((state) => state.preferences.theme);
@@ -101,6 +102,22 @@ export const App: React.FC = () => {
         if (!isTyping) {
           e.preventDefault();
           toggleHighlightMode();
+        }
+      }
+
+      if (e.key === 'j' || e.key === 'J') {
+        const target = e.target as HTMLElement | null;
+        const isTyping =
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT' ||
+            target.isContentEditable ||
+            Boolean(target.closest('[contenteditable="true"]')));
+
+        if (!isTyping && useAppStore.getState().highlightCount > 0) {
+          e.preventDefault();
+          requestScrollToLatestHighlight();
         }
       }
     };

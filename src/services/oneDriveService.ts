@@ -3,6 +3,50 @@ import { OneDriveItem } from '../types';
 
 const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
 
+const INVALID_ONEDRIVE_CHARS = /[\\/:*?"<>|]/;
+const RESERVED_DOS_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
+
+/**
+ * Valida se um nome de pasta ou arquivo é permitido no OneDrive / Windows.
+ */
+export function validateOneDriveName(rawName: string): {
+  valid: boolean;
+  sanitized: string;
+  error?: string;
+} {
+  const sanitized = rawName.trim().replace(/\.+$/, '').trim();
+  if (!sanitized || /^[.\s]+$/.test(sanitized)) {
+    return { valid: false, sanitized: '', error: 'O nome não pode ficar vazio.' };
+  }
+  if (INVALID_ONEDRIVE_CHARS.test(sanitized)) {
+    return {
+      valid: false,
+      sanitized,
+      error: 'O nome contém caracteres inválidos (\\ / : * ? " < > |).',
+    };
+  }
+  if (RESERVED_DOS_NAMES.test(sanitized)) {
+    return {
+      valid: false,
+      sanitized,
+      error: 'Este nome é reservado pelo sistema e não pode ser utilizado.',
+    };
+  }
+  return { valid: true, sanitized };
+}
+
+/**
+ * Verifica se o item retornado pela API do Microsoft Graph é uma pasta ou documento Markdown/texto suportado.
+ */
+export function isSupportedOneDriveItem(item: OneDriveItem): boolean {
+  if (Boolean(item.folder)) return true;
+  if (item.file || !item.folder) {
+    const name = (item.name || '').toLowerCase();
+    return name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt');
+  }
+  return false;
+}
+
 /**
  * Lists items in OneDrive folder (root or specified folderId).
  */
@@ -25,15 +69,7 @@ export async function listOneDriveItems(folderId?: string): Promise<OneDriveItem
   const data = await response.json();
   const items: OneDriveItem[] = data.value || [];
 
-  // Filter only folders and .md files
-  return items.filter((item) => {
-    if (item.folder) return true;
-    if (item.file) {
-      const name = item.name.toLowerCase();
-      return name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt');
-    }
-    return false;
-  });
+  return items.filter(isSupportedOneDriveItem);
 }
 
 /**
@@ -128,7 +164,6 @@ export function normalizeMarkdownFileName(name: string): string {
 /**
  * Calcula o próximo nome disponível em uma lista de nomes existentes,
  * adicionando ou incrementando sufixo numérico com parênteses: nome (1).md, nome (2).md...
- * Respeita a Seção 3.4 do plano (evita "nome 1.md" nativo do Graph).
  */
 export function computeNextAvailableFileName(desiredName: string, existingNames: string[] = []): string {
   const normalized = normalizeMarkdownFileName(desiredName);
@@ -247,4 +282,278 @@ export async function renameOneDriveFile(
   throw new Error('Não foi possível renomear o arquivo no OneDrive após múltiplas tentativas.');
 }
 
+/**
+ * Cria uma nova pasta no OneDrive via Microsoft Graph API.
+ */
+export async function createOneDriveFolder(
+  parentFolderId: string | undefined,
+  folderName: string
+): Promise<OneDriveItem> {
+  const validation = validateOneDriveName(folderName);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Nome de pasta inválido.');
+  }
 
+  const token = await getAccessToken();
+  const endpoint =
+    parentFolderId && parentFolderId !== 'root'
+      ? `${GRAPH_BASE_URL}/me/drive/items/${parentFolderId}/children`
+      : `${GRAPH_BASE_URL}/me/drive/root/children`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: validation.sanitized,
+      folder: {},
+      '@microsoft.graph.conflictBehavior': 'fail',
+    }),
+  });
+
+  if (response.status === 409) {
+    throw new Error(`Já existe uma pasta ou arquivo chamado "${validation.sanitized}" neste local.`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Falha ao criar pasta no OneDrive: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Renomeia um arquivo ou pasta no OneDrive via Microsoft Graph API.
+ */
+export async function renameOneDriveItem(
+  itemId: string,
+  desiredName: string,
+  isFolder: boolean = false
+): Promise<OneDriveItem> {
+  const validation = validateOneDriveName(desiredName);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Nome inválido.');
+  }
+
+  if (!isFolder) {
+    return renameOneDriveFile(itemId, validation.sanitized);
+  }
+
+  const token = await getAccessToken();
+  const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${itemId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: validation.sanitized }),
+  });
+
+  if (response.status === 409) {
+    throw new Error(`Já existe uma pasta ou arquivo chamado "${validation.sanitized}" neste local.`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Falha ao renomear pasta no OneDrive: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Exclui um item (arquivo ou pasta) no OneDrive movendo para a lixeira.
+ * Trata status 404 e 204 como sucesso idempotente.
+ */
+export async function deleteOneDriveItem(itemId: string): Promise<void> {
+  const token = await getAccessToken();
+  const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${itemId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (response.status === 404 || response.status === 204 || response.ok) {
+    return;
+  }
+
+  throw new Error(`Falha ao excluir item no OneDrive: ${response.statusText}`);
+}
+
+/**
+ * Exclui múltiplos itens com concorrência controlada para evitar HTTP 429.
+ */
+export async function deleteOneDriveItemsBatch(
+  itemIds: string[]
+): Promise<{ succeeded: string[]; failed: Array<{ id: string; error: string }> }> {
+  const succeeded: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const concurrency = 4;
+
+  for (let i = 0; i < itemIds.length; i += concurrency) {
+    const chunk = itemIds.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      chunk.map(async (id) => {
+        await deleteOneDriveItem(id);
+        return id;
+      })
+    );
+    results.forEach((res, idx) => {
+      if (res.status === 'fulfilled') {
+        succeeded.push(res.value);
+      } else {
+        failed.push({
+          id: chunk[idx],
+          error: res.reason?.message || 'Erro ao excluir item.',
+        });
+      }
+    });
+  }
+
+  return { succeeded, failed };
+}
+
+/**
+ * Move um arquivo ou pasta para uma pasta de destino no OneDrive.
+ */
+export async function moveOneDriveItem(
+  itemId: string,
+  targetFolderId: string | undefined
+): Promise<OneDriveItem> {
+  if (targetFolderId && itemId === targetFolderId) {
+    throw new Error('Não é possível mover uma pasta para dentro de si mesma.');
+  }
+
+  const token = await getAccessToken();
+  let destinationId = targetFolderId;
+
+  if (!destinationId || destinationId === 'root') {
+    const rootRes = await fetch(`${GRAPH_BASE_URL}/me/drive/root?select=id`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!rootRes.ok) {
+      throw new Error(`Falha ao localizar pasta raiz do OneDrive: ${rootRes.statusText}`);
+    }
+    const rootData = await rootRes.json();
+    destinationId = rootData.id;
+  }
+
+  if (itemId === destinationId) {
+    throw new Error('Não é possível mover uma pasta para dentro de si mesma.');
+  }
+
+  const response = await fetch(`${GRAPH_BASE_URL}/me/drive/items/${itemId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      parentReference: { id: destinationId },
+      '@microsoft.graph.conflictBehavior': 'rename',
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao mover item no OneDrive: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Move múltiplos itens com concorrência controlada para evitar HTTP 429.
+ */
+export async function moveOneDriveItemsBatch(
+  itemIds: string[],
+  targetFolderId: string | undefined
+): Promise<{ succeeded: OneDriveItem[]; failed: Array<{ id: string; error: string }> }> {
+  const succeeded: OneDriveItem[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const concurrency = 4;
+
+  for (let i = 0; i < itemIds.length; i += concurrency) {
+    const chunk = itemIds.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      chunk.map((id) => moveOneDriveItem(id, targetFolderId))
+    );
+    results.forEach((res, idx) => {
+      if (res.status === 'fulfilled') {
+        succeeded.push(res.value);
+      } else {
+        failed.push({
+          id: chunk[idx],
+          error: res.reason?.message || 'Erro ao mover item.',
+        });
+      }
+    });
+  }
+
+  return { succeeded, failed };
+}
+
+/**
+ * Duplica/copia um arquivo no OneDrive baixando o conteúdo e criando o arquivo com resolução de nomes.
+ */
+export async function copyOneDriveFile(
+  sourceItemId: string,
+  sourceItemName: string,
+  targetFolderId: string | undefined,
+  existingTargetNames: string[] = []
+): Promise<OneDriveItem> {
+  const content = await downloadOneDriveFile(sourceItemId);
+  return await createOneDriveFile(targetFolderId, sourceItemName, content, existingTargetNames);
+}
+
+/**
+ * Copia múltiplos arquivos sequencialmente para o destino rastreando colisões de nomes.
+ */
+export async function copyOneDriveFilesBatch(
+  sourceItems: Array<{ id: string; name: string }>,
+  targetFolderId: string | undefined,
+  existingTargetNames: string[] = []
+): Promise<{ succeeded: OneDriveItem[]; failed: Array<{ id: string; error: string }> }> {
+  const succeeded: OneDriveItem[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const trackedNames = [...existingTargetNames];
+
+  for (const item of sourceItems) {
+    try {
+      const created = await copyOneDriveFile(item.id, item.name, targetFolderId, trackedNames);
+      trackedNames.push(created.name);
+      succeeded.push(created);
+    } catch (err: any) {
+      failed.push({ id: item.id, error: err?.message || 'Erro ao copiar arquivo.' });
+    }
+  }
+
+  return { succeeded, failed };
+}
+
+/**
+ * Pesquisa itens no OneDrive globalmente via Microsoft Graph API e filtra arquivos suportados.
+ */
+export async function searchOneDriveItems(query: string): Promise<OneDriveItem[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const token = await getAccessToken();
+  const safeQuery = encodeURIComponent(trimmed.replace(/'/g, "''"));
+  const endpoint = `${GRAPH_BASE_URL}/me/drive/root/search(q='${safeQuery}')`;
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha na pesquisa do OneDrive: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const items: OneDriveItem[] = data.value || [];
+  return items.filter(isSupportedOneDriveItem);
+}

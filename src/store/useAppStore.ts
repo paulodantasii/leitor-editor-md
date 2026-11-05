@@ -8,6 +8,7 @@ import {
   RecentDocumentItem,
   TabItem,
   TabGroup,
+  OneDriveItem,
 } from '../types';
 import {
   loadUserPreferences,
@@ -92,6 +93,8 @@ interface AppState {
   setSyncNotification: (msg: string | null) => void;
   cloudConflict: { cloudModified: string; cloudContent: string } | null;
   setCloudConflict: (conflict: { cloudModified: string; cloudContent: string } | null) => void;
+  syncOneDriveFileRenamed: (itemId: string, updatedItem: OneDriveItem) => Promise<void>;
+  detachDeletedOneDriveItems: (deletedIds: string[]) => Promise<void>;
 
   // File Handle for Direct Overwrite Saving
   fileHandle: any | null;
@@ -1259,6 +1262,125 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSyncNotification: (msg) => set({ syncNotification: msg }),
   cloudConflict: null,
   setCloudConflict: (conflict) => set({ cloudConflict: conflict }),
+
+  syncOneDriveFileRenamed: async (itemId: string, updatedItem: OneDriveItem) => {
+    const state = get();
+    const isDocMatch = state.document?.oneDriveItemId === itemId;
+    const hasTabMatch = state.tabs.some((t) => t.oneDriveItemId === itemId);
+
+    if (!isDocMatch && !hasTabMatch) {
+      // Se apenas estiver no histórico de recentes
+      const inRecent = state.recentDocuments.find((r) => r.oneDriveItemId === itemId);
+      if (inRecent) {
+        await saveRecentDocument({
+          ...inRecent,
+          title: updatedItem.name,
+          cloudLastModified: updatedItem.lastModifiedDateTime,
+          cloudETag: updatedItem.eTag || null,
+        } as any).catch(() => {});
+        const updatedRecents = await getRecentDocuments();
+        set({ recentDocuments: updatedRecents });
+      }
+      return;
+    }
+
+    let nextDoc = state.document;
+    if (isDocMatch && nextDoc) {
+      nextDoc = {
+        ...nextDoc,
+        title: updatedItem.name,
+        cloudLastModified: updatedItem.lastModifiedDateTime,
+        cloudETag: updatedItem.eTag || null,
+      };
+      saveLocalDocument(nextDoc);
+    }
+
+    const nextTabs = state.tabs.map((t) => {
+      if (t.oneDriveItemId !== itemId) return t;
+      const updatedSnap = t.snapshot
+        ? {
+            ...t.snapshot,
+            title: updatedItem.name,
+            cloudLastModified: updatedItem.lastModifiedDateTime,
+            cloudETag: updatedItem.eTag || null,
+          }
+        : undefined;
+      return {
+        ...t,
+        title: updatedItem.name,
+        snapshot: updatedSnap,
+      };
+    });
+
+    set({
+      document: nextDoc,
+      tabs: nextTabs,
+    });
+    persistTabsSession(get().activeTabId, nextTabs, get().tabGroups);
+
+    // Atualiza histórico de recentes se o item estiver lá
+    const targetRecent = state.recentDocuments.find((r) => r.oneDriveItemId === itemId);
+    if (targetRecent) {
+      await saveRecentDocument({
+        ...targetRecent,
+        title: updatedItem.name,
+        cloudLastModified: updatedItem.lastModifiedDateTime,
+        cloudETag: updatedItem.eTag || null,
+      } as any).catch(() => {});
+      const updatedRecents = await getRecentDocuments();
+      set({ recentDocuments: updatedRecents });
+    }
+  },
+
+  detachDeletedOneDriveItems: async (deletedIds: string[]) => {
+    if (!deletedIds || deletedIds.length === 0) return;
+
+    const deletedSet = new Set(deletedIds);
+    for (const id of deletedIds) {
+      await deleteRecentFromDb('onedrive:' + id).catch(() => {});
+    }
+
+    const state = get();
+    let nextDoc = state.document;
+    if (nextDoc?.oneDriveItemId && deletedSet.has(nextDoc.oneDriveItemId)) {
+      nextDoc = {
+        ...nextDoc,
+        oneDriveItemId: null,
+        cloudETag: null,
+        cloudLastModified: null,
+        isDirty: true,
+      };
+      saveLocalDocument(nextDoc);
+    }
+
+    const nextTabs = state.tabs.map((t) => {
+      if (!t.oneDriveItemId || !deletedSet.has(t.oneDriveItemId)) return t;
+      const updatedSnap = t.snapshot
+        ? {
+            ...t.snapshot,
+            oneDriveItemId: null,
+            cloudETag: null,
+            cloudLastModified: null,
+            isDirty: true,
+          }
+        : undefined;
+      return {
+        ...t,
+        oneDriveItemId: null,
+        isDirty: true,
+        snapshot: updatedSnap,
+      };
+    });
+
+    set({
+      document: nextDoc,
+      tabs: nextTabs,
+    });
+    persistTabsSession(get().activeTabId, nextTabs, get().tabGroups);
+
+    const refreshedRecents = await getRecentDocuments();
+    set({ recentDocuments: refreshedRecents });
+  },
 
   // File Handle for Direct Overwrite Saving
   fileHandle: null,

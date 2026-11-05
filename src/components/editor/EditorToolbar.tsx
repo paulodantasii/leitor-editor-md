@@ -1,12 +1,18 @@
 import React, { useState, useRef, useEffect, useCallback, useReducer } from 'react';
 import { createPortal } from 'react-dom';
 import { Editor } from '@tiptap/react';
+import { generateNextHighlightId } from '../../services/highlightIdService';
+import {
+  TextCaseMode,
+  createCaseTransformTransaction,
+} from '../../services/textTransformService';
 import {
   Bold,
   Italic,
   Underline as UnderlineIcon,
   Strikethrough,
   Code,
+  SquareCode,
   Highlighter,
   Trash2,
   ChevronDown,
@@ -14,6 +20,13 @@ import {
   Heading2,
   Heading3,
   Heading4,
+  Heading5,
+  Heading6,
+  CaseSensitive,
+  CaseUpper,
+  CaseLower,
+  ALargeSmall,
+  Type,
   List,
   ListOrdered,
   Quote,
@@ -189,6 +202,60 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
     }
   }, [isSourceMode]);
 
+  const [isCaseMenuOpen, setIsCaseMenuOpen] = useState(false);
+  const [caseMenuCoords, setCaseMenuCoords] = useState<{ top: number; left: number } | null>(null);
+  const caseButtonRef = useRef<HTMLButtonElement>(null);
+  const caseMenuRef = useRef<HTMLDivElement>(null);
+
+  const updateCaseMenuPosition = useCallback(() => {
+    if (caseButtonRef.current) {
+      const rect = caseButtonRef.current.getBoundingClientRect();
+      setCaseMenuCoords({
+        top: rect.bottom + 8,
+        left: rect.left + rect.width / 2,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isCaseMenuOpen) {
+      updateCaseMenuPosition();
+      window.addEventListener('scroll', updateCaseMenuPosition, true);
+      window.addEventListener('resize', updateCaseMenuPosition);
+    }
+    return () => {
+      window.removeEventListener('scroll', updateCaseMenuPosition, true);
+      window.removeEventListener('resize', updateCaseMenuPosition);
+    };
+  }, [isCaseMenuOpen, updateCaseMenuPosition]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        caseMenuRef.current &&
+        !caseMenuRef.current.contains(e.target as Node) &&
+        caseButtonRef.current &&
+        !caseButtonRef.current.contains(e.target as Node)
+      ) {
+        setIsCaseMenuOpen(false);
+      }
+    };
+    if (isCaseMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isCaseMenuOpen]);
+
+  useEffect(() => {
+    if (isSourceMode) {
+      setIsHighlightMenuOpen(false);
+      setIsTableMenuOpen(false);
+      setIsCaseMenuOpen(false);
+    }
+  }, [isSourceMode]);
+
   if (!editor) return null;
 
   const isCustomHighlightActive = editor.isActive('customHighlight');
@@ -238,8 +305,22 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
         editor.view.dispatch(tr);
       }
     } else {
-      const newId = existingId || Math.random().toString(36).substring(2, 6);
-      editor.chain().focus().setCustomHighlight({ color, id: newId }).run();
+      let allSameExistingId = Boolean(existingId);
+      if (existingId && from !== to) {
+        editor.state.doc.nodesBetween(from, to, (node) => {
+          if (!node.isText) return;
+          const hasSameMark = node.marks.some(
+            (m) => m.type.name === 'customHighlight' && m.attrs.id === existingId
+          );
+          if (!hasSameMark) {
+            allSameExistingId = false;
+          }
+        });
+      }
+      const targetId = allSameExistingId && existingId
+        ? existingId
+        : generateNextHighlightId(editor.state.doc);
+      editor.chain().focus().setCustomHighlight({ color, id: targetId }).run();
     }
     setIsHighlightMenuOpen(false);
   };
@@ -307,8 +388,20 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
     }
   };
 
+  const hasTextSelection = !editor.state.selection.empty;
+
+  const handleTransformCase = (mode: TextCaseMode) => {
+    const tr = createCaseTransformTransaction(editor.state, mode);
+    if (tr) {
+      editor.view.dispatch(tr);
+      editor.view.focus();
+    }
+    setIsCaseMenuOpen(false);
+  };
+
   return (
     <div
+      data-editor-toolbar
       style={{ top: 'calc(var(--header-height, 4.875rem) + 12px)' }}
       className="sticky z-20 my-3 flex justify-center w-full animate-in fade-in slide-in-from-top-3 duration-200 print:hidden"
     >
@@ -376,12 +469,27 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
             <Code className="w-4 h-4" />
           </button>
 
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+            className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
+              editor.isActive('codeBlock') ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-semibold' : ''
+            }`}
+            title="Bloco de Código (inserir ou remover bloco ```)"
+          >
+            <SquareCode className="w-4 h-4" />
+          </button>
+
           {/* Highlight Color Picker & Remove Tool */}
           <div className="relative">
             <button
               ref={buttonRef}
               type="button"
-              onClick={() => setIsHighlightMenuOpen((prev) => !prev)}
+              onClick={() => {
+                setIsCaseMenuOpen(false);
+                if (isTableMenuOpen) setIsTableMenuOpen(false);
+                setIsHighlightMenuOpen((prev) => !prev);
+              }}
               className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-0.5 relative ${
                 isCustomHighlightActive || isHighlightMenuOpen
                   ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400'
@@ -449,7 +557,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
           </div>
         </div>
 
-        {/* Headings: H1, H2, H3 */}
+        {/* Headings: H1, H2, H3, H4, H5, H6 */}
         <div className="flex items-center gap-0.5 px-1.5 border-r border-slate-200 dark:border-slate-700">
           <button
             type="button"
@@ -494,6 +602,120 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
           >
             <Heading4 className="w-4 h-4" />
           </button>
+
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 5 }).run()}
+            className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
+              editor.isActive('heading', { level: 5 }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+            }`}
+            title="Título 5"
+          >
+            <Heading5 className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 6 }).run()}
+            className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
+              editor.isActive('heading', { level: 6 }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+            }`}
+            title="Título 6"
+          >
+            <Heading6 className="w-4 h-4" />
+          </button>
+
+          {/* Maiúsculas e Minúsculas (Estilo Word) */}
+          <div className="relative ml-0.5">
+            <button
+              ref={caseButtonRef}
+              type="button"
+              onClick={() => {
+                if (isHighlightMenuOpen) setIsHighlightMenuOpen(false);
+                if (isTableMenuOpen) setIsTableMenuOpen(false);
+                setIsCaseMenuOpen((prev) => !prev);
+              }}
+              className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-0.5 ${
+                isCaseMenuOpen
+                  ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-medium'
+                  : ''
+              }`}
+              title="Maiúsculas e Minúsculas (Shift+F3)"
+            >
+              <CaseSensitive className="w-4 h-4" />
+              <ChevronDown className="w-3 h-3 opacity-60" />
+            </button>
+
+            {isCaseMenuOpen && caseMenuCoords && createPortal(
+              <div
+                ref={caseMenuRef}
+                style={{
+                  position: 'fixed',
+                  top: `${caseMenuCoords.top}px`,
+                  left: `${caseMenuCoords.left}px`,
+                  transform: 'translateX(-50%)',
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                className="z-50 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-2 flex flex-col gap-0.5 min-w-[240px] animate-in fade-in zoom-in-95 duration-150 select-none pointer-events-auto text-xs"
+              >
+                <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700/60 mb-0.5 flex items-center justify-between">
+                  <span>Maiúsculas e Minúsculas</span>
+                  <span className="text-[10px] font-mono text-slate-400">Shift+F3</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!hasTextSelection}
+                  onClick={() => handleTransformCase('sentence')}
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <ALargeSmall className="w-4 h-4 text-blue-500 shrink-0" />
+                  <span>Primeira letra da frase em maiúscula.</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!hasTextSelection}
+                  onClick={() => handleTransformCase('lower')}
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <CaseLower className="w-4 h-4 text-blue-500 shrink-0" />
+                  <span>minúsculas</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!hasTextSelection}
+                  onClick={() => handleTransformCase('upper')}
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <CaseUpper className="w-4 h-4 text-blue-500 shrink-0" />
+                  <span>MAIÚSCULAS</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!hasTextSelection}
+                  onClick={() => handleTransformCase('capitalize')}
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <CaseSensitive className="w-4 h-4 text-blue-500 shrink-0" />
+                  <span>Colocar Cada Palavra em Maiúscula</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!hasTextSelection}
+                  onClick={() => handleTransformCase('invert')}
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  <Type className="w-4 h-4 text-blue-500 shrink-0" />
+                  <span>iNVERTER mAIÚSCULAS e mINÚSCULAS</span>
+                </button>
+              </div>,
+              document.body
+            )}
+          </div>
         </div>
 
         {/* Text Alignment */}
@@ -645,6 +867,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
             type="button"
             onClick={() => {
               if (isHighlightMenuOpen) setIsHighlightMenuOpen(false);
+              setIsCaseMenuOpen(false);
               setIsTableMenuOpen((prev) => !prev);
             }}
             className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1 ${
@@ -814,19 +1037,23 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
               type="button"
               onClick={onToggleSourceMode}
               aria-pressed={isSourceMode}
+              aria-label={
+                isSourceMode
+                  ? 'Voltar para o Editor Visual (Atalho: Ctrl+;)'
+                  : 'Modo Código-Fonte: editar o arquivo Markdown puro (Atalho: Ctrl+;)'
+              }
               title={
                 isSourceMode
                   ? 'Voltar para o Editor Visual (Atalho: Ctrl+;)'
                   : 'Modo Código-Fonte: editar o arquivo Markdown puro (Atalho: Ctrl+;)'
               }
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`p-1.5 rounded-lg transition-all cursor-pointer ${
                 isSourceMode
-                  ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                  ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
               }`}
             >
-              <FileCode className="w-4 h-4 shrink-0" />
-              <span>Código-Fonte</span>
+              <FileCode className="w-4 h-4" />
             </button>
           </div>
         )}

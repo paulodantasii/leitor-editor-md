@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import type { Editor } from '@tiptap/react';
 import { useAppStore } from '../store/useAppStore';
 import {
@@ -6,6 +6,10 @@ import {
   getTabScrollPosition,
   pruneTabScrollPositions,
 } from '../services/tabScrollMemory';
+import {
+  findLatestHighlightInfo,
+  scrollToLatestHighlightInContainer,
+} from '../services/highlightIdService';
 
 /** Máximo de frames para estabilizar a posição (ex.: tabelas largas, fontes ou imagens). */
 const MAX_RESTORE_FRAMES = 18;
@@ -31,7 +35,10 @@ const scrollWindowTo = (top: number): void => {
  *
  * IMPORTANTE: deve ser chamado no TiptapEditor DEPOIS do efeito que executa `setContent` por `docId`.
  */
-export function useTabScrollRestoration(editor: Editor | null): void {
+export function useTabScrollRestoration(
+  editor: Editor | null,
+  containerRef?: RefObject<HTMLElement | null>
+): void {
   const activeTabId = useAppStore((state) => state.activeTabId);
   const docId = useAppStore((state) => state.document?.docId);
 
@@ -95,7 +102,8 @@ export function useTabScrollRestoration(editor: Editor | null): void {
   }, []);
 
   // 3. Restauração determinística quando (activeTabId, docId) muda ou quando TiptapEditor remonta
-  //    após voltar da HomeScreen.
+  //    após voltar da HomeScreen. Se a aba acabou de ser aberta (savedY === null) e o documento
+  //    possui grifos, rola automaticamente até o grifo mais recente.
   useEffect(() => {
     if (!editor || !activeTabId || !docId) {
       isRestoringRef.current = false;
@@ -107,10 +115,11 @@ export function useTabScrollRestoration(editor: Editor | null): void {
     lastHandledKeyRef.current = compositeKey;
 
     const savedY = getTabScrollPosition(activeTabId, docId);
+    const shouldScrollToLatestHighlight =
+      savedY === null && Boolean(findLatestHighlightInfo(editor.state.doc));
 
-    // No primeiro mount absoluto da página (refresh sem scroll prévio salvo na memória em RAM),
-    // se não houver posição salva em tabScrollMemory, apenas sincroniza a referência atual.
-    if (previousKey === null && savedY === null) {
+    // No primeiro mount absoluto da página sem posição salva e sem grifos para focar:
+    if (previousKey === null && savedY === null && !shouldScrollToLatestHighlight) {
       isRestoringRef.current = false;
       lastKnownScrollYRef.current = window.scrollY;
       saveTabScrollPosition(activeTabId, window.scrollY, docId);
@@ -122,12 +131,22 @@ export function useTabScrollRestoration(editor: Editor | null): void {
       return;
     }
 
-    const targetY = savedY ?? 0;
+    const resolveCurrentTargetY = (): number => {
+      if (shouldScrollToLatestHighlight) {
+        const computedY = scrollToLatestHighlightInContainer(
+          containerRef?.current ?? null,
+          editor,
+          { behavior: 'instant', pulse: false, skipScroll: true }
+        );
+        return computedY ?? 0;
+      }
+      return savedY ?? 0;
+    };
+
+    let targetY = resolveCurrentTargetY();
     isRestoringRef.current = true;
 
-    // Se targetY > 0, desativa temporariamente content-visibility: auto via classe CSS na raiz
-    // para que o navegador meça a altura real completa do documento grande imediatamente.
-    if (targetY > 0) {
+    if (targetY > 0 || shouldScrollToLatestHighlight) {
       document.documentElement.classList.add(RESTORING_CLASS);
     }
 
@@ -136,11 +155,17 @@ export function useTabScrollRestoration(editor: Editor | null): void {
     let stableFrames = 0;
     let cancelledByUser = false;
 
-    const finishRestoration = (finalY: number): void => {
+    const finishRestoration = (finalY: number, triggerHighlightPulse: boolean): void => {
       document.documentElement.classList.remove(RESTORING_CLASS);
       isRestoringRef.current = false;
       lastKnownScrollYRef.current = finalY;
       saveTabScrollPosition(activeTabId, finalY, docId);
+      if (triggerHighlightPulse && shouldScrollToLatestHighlight) {
+        scrollToLatestHighlightInContainer(containerRef?.current ?? null, editor, {
+          pulse: true,
+          skipScroll: true,
+        });
+      }
     };
 
     const handleUserInterrupt = (): void => {
@@ -149,7 +174,7 @@ export function useTabScrollRestoration(editor: Editor | null): void {
         cancelAnimationFrame(frameId);
         frameId = 0;
       }
-      finishRestoration(window.scrollY);
+      finishRestoration(window.scrollY, false);
     };
 
     const handleKeyInterrupt = (e: KeyboardEvent): void => {
@@ -170,12 +195,12 @@ export function useTabScrollRestoration(editor: Editor | null): void {
     window.addEventListener('touchmove', handleUserInterrupt, { passive: true, once: true });
     window.addEventListener('keydown', handleKeyInterrupt, { passive: true });
 
-    // Aplica imediatamente de forma síncrona (aproveitando que setContent já rodou no efeito anterior)
     scrollWindowTo(targetY);
 
     const applyScrollLoop = (): void => {
       if (cancelledByUser) return;
 
+      targetY = resolveCurrentTargetY();
       scrollWindowTo(targetY);
       attempts += 1;
 
@@ -185,8 +210,6 @@ export function useTabScrollRestoration(editor: Editor | null): void {
         document.documentElement.scrollHeight - window.innerHeight
       );
       const reachedTarget = Math.abs(currentY - targetY) <= SCROLL_TOLERANCE_PX;
-      // Para targetY === 0, basta chegar em 0. Para targetY > 0, exige que reachedTarget seja true
-      // (ou que já tenhamos tentado vários frames e o documento realmente seja menor que targetY).
       const clampedAtBottom =
         attempts >= 6 && maxScrollableY < targetY && Math.abs(currentY - maxScrollableY) <= SCROLL_TOLERANCE_PX;
 
@@ -197,12 +220,12 @@ export function useTabScrollRestoration(editor: Editor | null): void {
       }
 
       if (stableFrames >= REQUIRED_STABLE_FRAMES || attempts >= MAX_RESTORE_FRAMES) {
-        // Remove a classe de medição forçada e aplica um último ajuste fino caso o layout tenha se acomodado
         document.documentElement.classList.remove(RESTORING_CLASS);
+        targetY = resolveCurrentTargetY();
         if (Math.abs(window.scrollY - targetY) > SCROLL_TOLERANCE_PX && maxScrollableY >= targetY) {
           scrollWindowTo(targetY);
         }
-        finishRestoration(window.scrollY);
+        finishRestoration(window.scrollY, true);
         return;
       }
 
@@ -221,5 +244,5 @@ export function useTabScrollRestoration(editor: Editor | null): void {
       document.documentElement.classList.remove(RESTORING_CLASS);
       isRestoringRef.current = false;
     };
-  }, [activeTabId, docId, editor]);
+  }, [activeTabId, docId, editor, containerRef]);
 }

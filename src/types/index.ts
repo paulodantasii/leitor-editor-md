@@ -85,7 +85,7 @@ export interface OneDriveItem {
   file?: { mimeType: string };
   lastModifiedDateTime: string;
   eTag?: string;
-  parentReference?: { path?: string };
+  parentReference?: { id?: string; path?: string };
 }
 
 export interface UserProfile {
