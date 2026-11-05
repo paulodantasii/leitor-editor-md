@@ -59,6 +59,7 @@ export interface TabItem {
   oneDriveItemId?: string | null;
   fileHandle?: any | null;
   groupId?: string | null;
+  kind?: 'doc' | 'home'; // undefined = 'doc'. 'home' = aba Início (sem documento)
   snapshot?: DocumentState; // Snapshot completo do documento quando a aba está inativa
 }
 
@@ -71,6 +72,7 @@ export interface OpenTabsSession {
     oneDriveItemId: string | null;
     isDirty: boolean;
     groupId?: string | null;
+    kind?: 'doc' | 'home';
   }>;
   groups?: TabGroup[];
 }

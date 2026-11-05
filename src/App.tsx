@@ -50,6 +50,13 @@ export const App: React.FC = () => {
     document.title = cleanTitle ? `${cleanTitle} - Leitor & Editor MD` : 'Leitor & Editor Markdown PWA';
   }, [docTitle]);
 
+  // Ao alternar para a tela inicial (sem documento ativo), posiciona a janela no topo
+  useEffect(() => {
+    if (!hasDocument) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }
+  }, [hasDocument]);
+
   // Global Keyboard Shortcuts (Press 'G' to toggle Highlight mode)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

@@ -166,25 +166,11 @@ mark.gray {
   --paragraph-spacing: 1.25em;
 }
 
-/* Renderização de alta performance para documentos extensos:
-   Pula cálculo de layout/pintura de nós fora da tela enquanto preserva busca nativa (Ctrl+F) e seleção.
-   Obs.: <ol> fica de fora de propósito. content-visibility aplica paint containment, que corta os
-   marcadores numéricos (outside) mais largos que o padding-left (ex.: "10." vira "0."). */
-.ProseMirror > p,
-.ProseMirror > blockquote,
-.ProseMirror > ul,
-.ProseMirror > .tableWrapper,
-.ProseMirror > table,
-.ProseMirror > pre,
-.ProseMirror > h1,
-.ProseMirror > h2,
-.ProseMirror > h3,
-.ProseMirror > h4,
-.ProseMirror > h5,
-.ProseMirror > h6,
-.ProseMirror > hr {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 3.25rem;
+/* Durante a restauração programática de scroll entre abas, desativa temporariamente
+   o scroll-anchoring nativo para que o navegador aplique window.scrollTo sem interferência. */
+html.scroll-restoring,
+html.scroll-restoring body {
+  overflow-anchor: none !important;
 }
 
 .ProseMirror p {
@@ -660,18 +646,6 @@ mark.gray {
 
   .ProseMirror {
     --paragraph-spacing: 0.9em !important;
-  }
-
-  /* Desativa content-visibility na impressão para forçar a renderização completa em todas as páginas */
-  .ProseMirror > p,
-  .ProseMirror > blockquote,
-  .ProseMirror > ul,
-  .ProseMirror > ol,
-  .ProseMirror > .tableWrapper,
-  .ProseMirror > table,
-  .ProseMirror > pre {
-    content-visibility: visible !important;
-    contain-intrinsic-size: auto !important;
   }
 
   /* Typography formatting for printed page */

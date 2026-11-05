@@ -1,59 +1,89 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 
+function countWordsFast(text: string): number {
+  let count = 0;
+  let inWord = false;
+  let inTag = false;
+  const len = text.length;
+
+  for (let i = 0; i < len; i++) {
+    const ch = text.charCodeAt(i);
+    if (ch === 60 /* < */) {
+      inTag = true;
+      inWord = false;
+      continue;
+    }
+    if (ch === 62 /* > */) {
+      inTag = false;
+      continue;
+    }
+    if (inTag) continue;
+
+    // Whitespace check: espaço (32), quebra de linha (10), CR (13), tab (9)
+    if (ch <= 32) {
+      inWord = false;
+    } else if (!inWord) {
+      inWord = true;
+      count++;
+    }
+  }
+
+  return count;
+}
+
 export const ReadingProgress: React.FC = () => {
+  const docId = useAppStore((state) => state.document?.docId);
   const docContent = useAppStore((state) => state.document?.content);
+  const isEditable = useAppStore((state) => state.isEditable);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [wordCount, setWordCount] = useState(0);
+  const lastCountedDocIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!docContent) {
       setWordCount(0);
+      lastCountedDocIdRef.current = docId;
       return;
     }
 
+    const isNewDocument = lastCountedDocIdRef.current !== docId;
+    lastCountedDocIdRef.current = docId;
+
+    // Ao abrir um documento ou alternar de aba, calcula imediatamente para exibir o tempo exato
+    if (isNewDocument) {
+      setWordCount(countWordsFast(docContent));
+      return;
+    }
+
+    // Em modo leitura (!isEditable), alterações de docContent são apenas grifos (<mark>),
+    // que não alteram a quantidade de palavras do documento.
+    if (!isEditable) {
+      return;
+    }
+
+    const delay = docContent.length > 80000 ? 2500 : 800;
+    let idleId: number | null = null;
+
     const timer = setTimeout(() => {
       const runCount = () => {
-        // Contagem de alta performance sem alocação massiva de arrays no heap
-        let count = 0;
-        let inWord = false;
-        let inTag = false;
-        const len = docContent.length;
-
-        for (let i = 0; i < len; i++) {
-          const ch = docContent.charCodeAt(i);
-          if (ch === 60 /* < */) {
-            inTag = true;
-            inWord = false;
-            continue;
-          }
-          if (ch === 62 /* > */) {
-            inTag = false;
-            continue;
-          }
-          if (inTag) continue;
-
-          // Whitespace check: espaço (32), quebra de linha (10), CR (13), tab (9)
-          if (ch <= 32) {
-            inWord = false;
-          } else if (!inWord) {
-            inWord = true;
-            count++;
-          }
-        }
-
-        setWordCount(count);
+        setWordCount(countWordsFast(docContent));
       };
 
       if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(runCount, { timeout: 2000 });
+        idleId = (window as any).requestIdleCallback(runCount, { timeout: 2000 });
       } else {
         runCount();
       }
-    }, 600);
+    }, delay);
 
-    return () => clearTimeout(timer);
-  }, [docContent]);
+    return () => {
+      clearTimeout(timer);
+      if (idleId !== null && typeof window !== 'undefined' && 'cancelIdleCallback' in window) {
+        (window as any).cancelIdleCallback(idleId);
+      }
+    };
+  }, [docId, docContent, isEditable]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -67,19 +97,24 @@ export const ReadingProgress: React.FC = () => {
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
-    
-    // Run once initially
+
+    // Recalcula imediatamente ao montar ou trocar de documento
     handleScroll();
-    
-    // Also observe changes in content height to recalculate
+    const rafId = requestAnimationFrame(handleScroll);
+
+    // Observa mudanças reais de layout no corpo do documento e no container raiz
     const resizeObserver = new ResizeObserver(() => handleScroll());
     resizeObserver.observe(document.body);
-    
+    if (document.documentElement) {
+      resizeObserver.observe(document.documentElement);
+    }
+
     return () => {
+      cancelAnimationFrame(rafId);
       window.removeEventListener('scroll', handleScroll);
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [docId]);
 
   if (!docContent) return null;
 

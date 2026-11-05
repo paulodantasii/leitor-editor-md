@@ -15,6 +15,7 @@ import { mergeAttributes } from '@tiptap/core';
 import TableRow from '@tiptap/extension-table-row';
 import TableHeader from '@tiptap/extension-table-header';
 import TableCell from '@tiptap/extension-table-cell';
+import { TextSelection } from '@tiptap/pm/state';
 
 import { useAppStore } from '../../store/useAppStore';
 import { CustomHighlight } from './CustomHighlight';
@@ -78,8 +79,8 @@ export const TiptapEditor: React.FC = () => {
   const lastEmittedMarkdownRef = useRef<string | null>(null);
   const currentLoadedDocIdRef = useRef<string | null | undefined>(null);
   const markdownDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const markdownIdleCallbackRef = useRef<number | null>(null);
   const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const lastTypingStartTimeRef = useRef<number | null>(null);
 
   // Estado e refs do Modo Código-Fonte (Markdown puro)
   const [rawContent, setRawContent] = useState<string>(() => useAppStore.getState().document?.content || '');
@@ -90,6 +91,7 @@ export const TiptapEditor: React.FC = () => {
 
   // State to control popover visibility: only opens on explicit click on a highlight mark
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const [activeHighlightColor, setActiveHighlightColor] = useState<HighlightColor>('yellow');
   const isPopoverOpenRef = useRef(false);
 
   const setPopoverOpen = useCallback((open: boolean) => {
@@ -113,6 +115,7 @@ export const TiptapEditor: React.FC = () => {
 
   const editorRef = useRef<Editor | null>(null);
   const scheduleDebouncedContentRef = useRef<() => void>(() => {});
+  const postponePendingContentFlushRef = useRef<() => void>(() => {});
 
   // High-performance highlight counting directly from in-memory ProseMirror doc tree
   const updateHighlightCount = useCallback(
@@ -155,9 +158,11 @@ export const TiptapEditor: React.FC = () => {
       if (highlightCountDebounceTimerRef.current) {
         clearTimeout(highlightCountDebounceTimerRef.current);
       }
+      const docSize = (lastEmittedMarkdownRef.current || '').length;
+      const delay = docSize > 80000 ? 2500 : 1000;
       highlightCountDebounceTimerRef.current = setTimeout(() => {
         updateHighlightCount(ed);
-      }, 1200);
+      }, delay);
     },
     [updateHighlightCount]
   );
@@ -226,15 +231,19 @@ export const TiptapEditor: React.FC = () => {
       CustomHighlight,
       Markdown.configure({ html: true, transformPastedText: true, transformCopiedText: true, breaks: true }),
     ],
+    shouldRerenderOnTransaction: false,
     content: useAppStore.getState().document?.content || '',
     editable: isEditable,
-    onUpdate: ({ editor: currentEditor, transaction }) => {
+    onUpdate: ({ transaction }) => {
       if (!transaction.docChanged) return;
       scheduleDebouncedContentRef.current();
-      scheduleDebouncedHighlightCount(currentEditor);
     },
     onSelectionUpdate: ({ editor: currentEditor }) => {
       if (!currentEditor) return;
+
+      // Se houver edições pendentes no buffer, qualquer movimento de cursor ou seleção
+      // indica que o usuário continua ativo no documento — adia a serialização pesada.
+      postponePendingContentFlushRef.current();
 
       const { from, to } = currentEditor.state.selection;
 
@@ -269,13 +278,24 @@ export const TiptapEditor: React.FC = () => {
 
   editorRef.current = editor;
 
-  // Flushes pending in-memory editor changes immediately to store and local storage
-  const flushContent = useCallback(() => {
-    lastTypingStartTimeRef.current = null;
+  const clearPendingContentTimers = useCallback(() => {
     if (markdownDebounceTimerRef.current) {
       clearTimeout(markdownDebounceTimerRef.current);
       markdownDebounceTimerRef.current = null;
     }
+    if (
+      markdownIdleCallbackRef.current !== null &&
+      typeof window !== 'undefined' &&
+      'cancelIdleCallback' in window
+    ) {
+      (window as any).cancelIdleCallback(markdownIdleCallbackRef.current);
+      markdownIdleCallbackRef.current = null;
+    }
+  }, []);
+
+  // Flushes pending in-memory editor changes immediately to store and local storage
+  const flushContent = useCallback(() => {
+    clearPendingContentTimers();
 
     // Skip heavy serialization if there are no pending unsaved changes
     if (!hasPendingBridgeChanges()) {
@@ -299,38 +319,63 @@ export const TiptapEditor: React.FC = () => {
     markBridgeClean();
     updateDocumentContent(rawMarkdown);
     updateHighlightCount(currentEditor);
-  }, [updateDocumentContent, updateHighlightCount, setHighlightCount]);
+  }, [clearPendingContentTimers, updateDocumentContent, updateHighlightCount, setHighlightCount]);
 
-  const scheduleDebouncedContent = useCallback(() => {
-    markDocumentDirty();
-    markBridgeDirty();
+  const armIdleFlushTimer = useCallback(() => {
+    clearPendingContentTimers();
 
-    if (!lastTypingStartTimeRef.current) {
-      lastTypingStartTimeRef.current = Date.now();
-    }
-
-    // Max-wait no editor: se digitação contínua por 4 s, força a serialização em background
-    if (Date.now() - lastTypingStartTimeRef.current >= 4000) {
-      flushContent();
-      return;
-    }
-
-    if (markdownDebounceTimerRef.current) {
-      clearTimeout(markdownDebounceTimerRef.current);
-    }
-
-    // Debounce adaptativo ao tamanho do documento (700ms para normais, até 1200ms para arquivos gigantes)
+    // Debounce adaptativo ao tamanho do documento:
+    // Em arquivos gigantes (> 200KB, como o CPC), aguarda 5s de inatividade completa
+    // (sem digitar, apagar, formatar ou mover o cursor) para nunca travar a UI.
     const docSize = (lastEmittedMarkdownRef.current || '').length;
-    const delay = docSize > 200000 ? 1200 : docSize > 80000 ? 950 : 700;
+    const delay = docSize > 200000 ? 5000 : docSize > 80000 ? 3000 : 1000;
 
     markdownDebounceTimerRef.current = setTimeout(() => {
-      flushContent();
+      markdownDebounceTimerRef.current = null;
+
+      // Enquanto o popover de cor/exclusão de grifo estiver aberto, adia a serialização
+      if (isPopoverOpenRef.current && hasPendingBridgeChanges()) {
+        armIdleFlushTimer();
+        return;
+      }
+
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        markdownIdleCallbackRef.current = (window as any).requestIdleCallback(
+          () => {
+            markdownIdleCallbackRef.current = null;
+            if (isPopoverOpenRef.current && hasPendingBridgeChanges()) {
+              armIdleFlushTimer();
+              return;
+            }
+            flushContent();
+          },
+          { timeout: 2000 }
+        );
+      } else {
+        flushContent();
+      }
     }, delay);
-  }, [flushContent, markDocumentDirty]);
+  }, [clearPendingContentTimers, flushContent]);
+
+  const scheduleDebouncedContent = useCallback(() => {
+    // Só dispara mutação na store Zustand na transição inicial para dirty,
+    // evitando clonar o documento e o array de abas a cada tecla pressionada.
+    if (!useAppStore.getState().document?.isDirty) {
+      markDocumentDirty();
+    }
+    markBridgeDirty();
+    armIdleFlushTimer();
+  }, [armIdleFlushTimer, markDocumentDirty]);
+
+  const postponePendingContentFlush = useCallback(() => {
+    if (!hasPendingBridgeChanges()) return;
+    armIdleFlushTimer();
+  }, [armIdleFlushTimer]);
 
   scheduleDebouncedContentRef.current = scheduleDebouncedContent;
+  postponePendingContentFlushRef.current = postponePendingContentFlush;
 
-  // Register bridge flush handler & window lifecycle guards (background/close/blur)
+  // Register bridge flush handler & window lifecycle guards (background/close)
   useEffect(() => {
     const unregister = registerEditorFlushHandler(() => {
       flushContent();
@@ -346,27 +391,19 @@ export const TiptapEditor: React.FC = () => {
       flushContent();
     };
 
-    const handleBlur = () => {
-      flushContent();
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pagehide', handlePageHide);
-    window.addEventListener('blur', handleBlur);
 
     return () => {
       unregister();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
-      window.removeEventListener('blur', handleBlur);
-      if (markdownDebounceTimerRef.current) {
-        clearTimeout(markdownDebounceTimerRef.current);
-      }
+      clearPendingContentTimers();
       if (highlightCountDebounceTimerRef.current) {
         clearTimeout(highlightCountDebounceTimerRef.current);
       }
     };
-  }, [flushContent]);
+  }, [flushContent, clearPendingContentTimers]);
 
   // Update content when document switches externally (docId) or initial mount
   useEffect(() => {
@@ -471,10 +508,13 @@ export const TiptapEditor: React.FC = () => {
     if (!isSourceMode) return;
     const el = rawTextareaRef.current;
     if (!el) return;
+    const isRestoringTabScroll = document.documentElement.classList.contains('scroll-restoring');
     const savedScrollY = window.scrollY;
     el.style.height = 'auto';
     el.style.height = `${Math.max(el.scrollHeight, 480)}px`;
-    window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+    if (!isRestoringTabScroll) {
+      window.scrollTo({ top: savedScrollY, left: 0, behavior: 'instant' });
+    }
   }, [rawContent, isSourceMode, preferences.fontSize, preferences.textWidth]);
 
   // Garante que a impressão/PDF (window.print) a partir do Modo Código-Fonte reflita o texto mais recente no ProseMirror
@@ -617,6 +657,11 @@ export const TiptapEditor: React.FC = () => {
               return;
             }
 
+            const clickedColor =
+              (markEl.getAttribute('data-color') as HighlightColor) ||
+              (editor.getAttributes('customHighlight').color as HighlightColor) ||
+              'yellow';
+            setActiveHighlightColor(clickedColor);
             setPopoverOpen(true);
             editor.commands.setTextSelection(pos + 1);
             return;
@@ -686,6 +731,11 @@ export const TiptapEditor: React.FC = () => {
               return;
             }
 
+            const clickedColor =
+              (markEl.getAttribute('data-color') as HighlightColor) ||
+              (editor.getAttributes('customHighlight').color as HighlightColor) ||
+              'yellow';
+            setActiveHighlightColor(clickedColor);
             setPopoverOpen(true);
             editor.commands.setTextSelection(pos + 1);
             return;
@@ -720,17 +770,18 @@ export const TiptapEditor: React.FC = () => {
 
   const handleSelectColor = (color: HighlightColor) => {
     if (!editor) return;
-    
+
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setActiveHighlightColor(color);
     setPopoverOpen(false);
 
     const attrs = editor.getAttributes('customHighlight');
     const existingId = attrs.id;
-    
+    const { from, to } = editor.state.selection;
+
     if (existingId) {
       const { tr } = editor.state;
       let modified = false;
-      const { from, to } = editor.state.selection;
 
       // Localized search range (10000 characters) around current selection
       const searchFrom = Math.max(0, from - 5000);
@@ -760,31 +811,36 @@ export const TiptapEditor: React.FC = () => {
           }
         });
       }
-      
-      if (modified) {
-        editor.view.dispatch(tr);
-      }
+
+      const safePos = Math.min(to, tr.doc.content.size);
+      tr.setSelection(TextSelection.create(tr.doc, safePos));
+      editor.view.dispatch(tr);
     } else {
       const newId = Math.random().toString(36).substring(2, 6);
-      editor.chain().setCustomHighlight({ color, id: newId }).run();
+      editor
+        .chain()
+        .setCustomHighlight({ color, id: newId })
+        .setTextSelection(to)
+        .run();
     }
-    
-    // Clear selection away from highlight so popover closes cleanly without scanning doc
-    editor.commands.setTextSelection(editor.state.selection.to);
+
     window.getSelection()?.removeAllRanges();
     // Color change does not alter count; no recounting needed
   };
 
   const handleRemoveHighlight = () => {
     if (!editor) return;
-    
+
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setPopoverOpen(false);
+
     const attrs = editor.getAttributes('customHighlight');
     const existingId = attrs.id;
-    
+    const { from, to } = editor.state.selection;
+
     if (existingId) {
       const { tr } = editor.state;
       let modified = false;
-      const { from, to } = editor.state.selection;
 
       const searchFrom = Math.max(0, from - 5000);
       const searchTo = Math.min(tr.doc.content.size, to + 5000);
@@ -808,20 +864,18 @@ export const TiptapEditor: React.FC = () => {
           }
         });
       }
-      
-      if (modified) {
-        editor.view.dispatch(tr);
-      }
-    } else {
-      editor.chain().unsetCustomHighlight().run();
-    }
-    
-    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-    
-    setPopoverOpen(false);
 
-    // Clear selection away from highlight cleanly without scanning doc
-    editor.commands.setTextSelection(editor.state.selection.to);
+      const safePos = Math.min(to, tr.doc.content.size);
+      tr.setSelection(TextSelection.create(tr.doc, safePos));
+      editor.view.dispatch(tr);
+    } else {
+      editor
+        .chain()
+        .unsetCustomHighlight()
+        .setTextSelection(to)
+        .run();
+    }
+
     window.getSelection()?.removeAllRanges();
     scheduleDebouncedHighlightCount(editor);
   };
@@ -893,7 +947,7 @@ export const TiptapEditor: React.FC = () => {
             shouldShow={({ editor }) => !isEditable && isPopoverOpenRef.current && editor.isActive('customHighlight')}
           >
             <HighlightPopover
-              activeColor={editor.getAttributes('customHighlight').color as HighlightColor}
+              activeColor={activeHighlightColor}
               onSelectColor={handleSelectColor}
               onRemoveHighlight={handleRemoveHighlight}
               onClose={() => setPopoverOpen(false)}

@@ -478,3 +478,168 @@ describe('Reordenação de Abas e Grupos de Abas com Cores', () => {
     expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab3, tab1, tab2]);
   });
 });
+
+describe('Aba Início (Nova Aba)', () => {
+  const mockLocalStorage: Record<string, string> = {};
+
+  beforeEach(() => {
+    for (const key of Object.keys(mockLocalStorage)) {
+      delete mockLocalStorage[key];
+    }
+
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => mockLocalStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        mockLocalStorage[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete mockLocalStorage[k];
+      },
+      clear: () => {
+        for (const key of Object.keys(mockLocalStorage)) {
+          delete mockLocalStorage[key];
+        }
+      },
+    });
+
+    useAppStore.getState().closeDocument();
+  });
+
+  it('openHomeTab cria aba Início ativa e zera o documento', () => {
+    const tabAId = useAppStore.getState().openTab({
+      title: 'Doc A.md',
+      content: '# Conteúdo A',
+    });
+
+    const homeId = useAppStore.getState().openHomeTab();
+    const state = useAppStore.getState();
+
+    expect(state.tabs).toHaveLength(2);
+    expect(state.activeTabId).toBe(homeId);
+    expect(state.tabs[1].id).toBe(homeId);
+    expect(state.tabs[1].kind).toBe('home');
+    expect(state.document).toBeNull();
+    expect(state.fileHandle).toBeNull();
+    expect(state.isEditable).toBe(false);
+
+    const docATab = state.tabs.find((t) => t.id === tabAId);
+    expect(docATab?.snapshot?.title).toBe('Doc A.md');
+    expect(docATab?.snapshot?.content).toBe('# Conteúdo A');
+  });
+
+  it('não duplica a aba Início', async () => {
+    const docAId = useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    const homeId1 = useAppStore.getState().openHomeTab();
+    const homeId2 = useAppStore.getState().openHomeTab();
+    expect(homeId1).toBe(homeId2);
+
+    // Volta para o Doc A antes de abrir o Doc B para manter a aba Início em segundo plano
+    await useAppStore.getState().switchTab(docAId);
+    const docBId = useAppStore.getState().openTab({ title: 'Doc B.md', content: 'B' });
+    expect(useAppStore.getState().activeTabId).toBe(docBId);
+
+    // Ao chamar openHomeTab() com a aba Início já existente em segundo plano, alterna para ela sem duplicar
+    const homeId3 = useAppStore.getState().openHomeTab();
+    expect(homeId3).toBe(homeId1);
+
+    const homeTabs = useAppStore.getState().tabs.filter((t) => t.kind === 'home');
+    expect(homeTabs).toHaveLength(1);
+    expect(useAppStore.getState().activeTabId).toBe(homeId1);
+  });
+
+  it('voltar a um documento restaura o conteúdo', async () => {
+    const tabAId = useAppStore.getState().openTab({
+      title: 'Doc A.md',
+      content: '# Conteúdo Original',
+    });
+
+    useAppStore.getState().openHomeTab();
+    expect(useAppStore.getState().document).toBeNull();
+
+    await useAppStore.getState().switchTab(tabAId);
+    const state = useAppStore.getState();
+    expect(state.activeTabId).toBe(tabAId);
+    expect(state.document?.title).toBe('Doc A.md');
+    expect(state.document?.content).toBe('# Conteúdo Original');
+  });
+
+  it('openTab converte a aba Início', () => {
+    useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    const homeId = useAppStore.getState().openHomeTab();
+    const lengthBefore = useAppStore.getState().tabs.length;
+
+    const realTabId = useAppStore.getState().openTab({
+      title: 'Real.md',
+      content: '# x',
+    });
+
+    const state = useAppStore.getState();
+    expect(state.tabs).toHaveLength(lengthBefore);
+    expect(state.tabs.some((t) => t.kind === 'home')).toBe(false);
+    expect(realTabId).toBe(homeId);
+    expect(state.activeTabId).toBe(homeId);
+    expect(state.document?.title).toBe('Real.md');
+    expect(state.document?.content).toBe('# x');
+  });
+
+  it('createNewDocument na Início converte a aba em rascunho em branco editável', () => {
+    useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    useAppStore.getState().openHomeTab();
+
+    useAppStore.getState().createNewDocument();
+    const state = useAppStore.getState();
+
+    expect(state.isEditable).toBe(true);
+    expect(state.document?.title).toBe('Sem Título.md');
+    expect(state.tabs.some((t) => t.kind === 'home')).toBe(false);
+  });
+
+  it('closeTab da Início ativa volta ao documento vizinho', () => {
+    useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    const homeId = useAppStore.getState().openHomeTab();
+
+    useAppStore.getState().closeTab(homeId, true);
+    const state = useAppStore.getState();
+
+    expect(state.document?.title).toBe('Doc A.md');
+    expect(state.tabs).toHaveLength(1);
+    expect(state.activeTabId).toBe(state.tabs[0].id);
+  });
+
+  it('closeTab de documento ativo cuja vizinha é a Início', async () => {
+    const tabAId = useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    const homeId = useAppStore.getState().openHomeTab();
+
+    await useAppStore.getState().switchTab(tabAId);
+    expect(useAppStore.getState().activeTabId).toBe(tabAId);
+
+    useAppStore.getState().closeTab(tabAId, true);
+    const state = useAppStore.getState();
+
+    expect(state.document).toBeNull();
+    expect(state.activeTabId).toBe(homeId);
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0].kind).toBe('home');
+  });
+
+  it('renameTab ignora a Início mantendo o título Início', () => {
+    useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    const homeId = useAppStore.getState().openHomeTab();
+
+    useAppStore.getState().renameTab(homeId, 'Outro');
+    const homeTab = useAppStore.getState().tabs.find((t) => t.id === homeId);
+    expect(homeTab?.title).toBe('Início');
+  });
+
+  it('persistência salva aba com kind: home e activeTabId correto', () => {
+    useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
+    const homeId = useAppStore.getState().openHomeTab();
+
+    const raw = mockLocalStorage['leitor_md_open_tabs_v1'];
+    expect(raw).toBeDefined();
+    const parsed = JSON.parse(raw);
+    const savedHome = parsed.tabs.find((t: { id: string }) => t.id === homeId);
+    expect(savedHome?.kind).toBe('home');
+    expect(parsed.activeTabId).toBe(homeId);
+  });
+});

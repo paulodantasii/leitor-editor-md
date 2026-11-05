@@ -47,6 +47,7 @@ export const Header: React.FC = () => {
     tabs,
     activeTabId,
     openTab,
+    openHomeTab,
     switchTab,
     closeTab,
     fileHandle,
@@ -73,6 +74,7 @@ export const Header: React.FC = () => {
       tabs: state.tabs,
       activeTabId: state.activeTabId,
       openTab: state.openTab,
+      openHomeTab: state.openHomeTab,
       switchTab: state.switchTab,
       closeTab: state.closeTab,
       fileHandle: state.fileHandle,
@@ -797,7 +799,9 @@ export const Header: React.FC = () => {
       {tabs.length > 0 && (
         <TabBar
           onRequestCloseTab={handleCloseTabClick}
-          onNewFile={handleNewFile}
+          onNewTab={() => {
+            openHomeTab();
+          }}
         />
       )}
 

@@ -26,7 +26,7 @@ import {
   loadRecentDocumentWithCloudSync,
   cleanupBlankRecentDocuments,
 } from '../services/recentDocumentsService';
-import { isBlankUntitledDocument } from '../services/documentUtils';
+import { isBlankUntitledDocument, isHomeTab, HOME_TAB_TITLE } from '../services/documentUtils';
 import { flushPendingEditorContent } from '../services/editorContentBridge';
 import { SAMPLE_LEGISLATION_DOC } from '../components/sampleDocs';
 import { renameOneDriveFile } from '../services/oneDriveService';
@@ -41,6 +41,7 @@ interface AppState {
   activeTabId: string | null;
   tabGroups: TabGroup[];
   openTab: (doc: Partial<DocumentState> & { title: string; content?: string }, fileHandle?: any) => string;
+  openHomeTab: () => string;
   switchTab: (tabId: string) => Promise<void>;
   closeTab: (tabId: string, forceWithoutSaving?: boolean) => void;
   renameTab: (tabId: string, newTitle: string) => void;
@@ -138,6 +139,30 @@ const normalizeGroupContiguity = (tabs: TabItem[]): TabItem[] => {
   return result;
 };
 
+// Estado de visualização quando a aba ativa é a aba Início (sem documento)
+const HOME_VIEW_STATE: Pick<
+  AppState,
+  | 'document'
+  | 'fileHandle'
+  | 'isEditable'
+  | 'isSourceMode'
+  | 'isHighlightMode'
+  | 'highlightCount'
+  | 'syncStatus'
+  | 'syncNotification'
+  | 'cloudConflict'
+> = {
+  document: null,
+  fileHandle: null,
+  isEditable: false,
+  isSourceMode: false,
+  isHighlightMode: false,
+  highlightCount: 0,
+  syncStatus: 'idle' as SyncStatus,
+  syncNotification: null,
+  cloudConflict: null,
+};
+
 const persistTabsSession = (activeTabId: string | null, tabs: TabItem[], groups: TabGroup[]) => {
   saveOpenTabsSession({
     activeTabId,
@@ -148,6 +173,7 @@ const persistTabsSession = (activeTabId: string | null, tabs: TabItem[], groups:
       oneDriveItemId: t.oneDriveItemId || null,
       isDirty: t.isDirty,
       groupId: t.groupId ?? null,
+      kind: t.kind ?? 'doc',
     })),
     groups,
   });
@@ -179,8 +205,10 @@ const getInitialDoc = (): DocumentState | null => {
   return null;
 };
 
-const initialDoc: DocumentState | null = getInitialDoc();
 const savedSession = loadOpenTabsSession();
+const sessionActiveId = savedSession?.tabs?.length ? (savedSession.activeTabId || savedSession.tabs[0].id) : null;
+const isHomeSession = Boolean(sessionActiveId && savedSession?.tabs.find((t) => t.id === sessionActiveId)?.kind === 'home');
+const initialDoc: DocumentState | null = isHomeSession ? null : getInitialDoc();
 
 let initialTabs: TabItem[] = [];
 let initialActiveTabId: string | null = null;
@@ -191,6 +219,7 @@ if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
     const isCurActive = t.id === initialActiveTabId;
     return {
       id: t.id,
+      kind: t.kind ?? 'doc',
       title: t.title,
       isDirty: t.isDirty,
       docId: t.docId,
@@ -219,6 +248,19 @@ if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
 
 const initialTabGroups: TabGroup[] = savedSession?.groups ? pruneOrphanGroups(initialTabs, savedSession.groups) : [];
 initialTabs = normalizeGroupContiguity(initialTabs);
+
+// Ao deixar um documento para ir à Home, garante que o rascunho local não se perca
+// (o efeito de autosave cancela o timer pendente quando document vira null).
+const persistDraftOnLeave = (
+  doc: DocumentState | null,
+  update: (list: RecentDocumentItem[]) => void
+): void => {
+  if (!doc || isBlankUntitledDocument(doc)) return;
+  if (doc.oneDriveItemId || doc.fileHandle) return; // fontes graváveis são tratadas pelo autosave/coordinator
+  saveRecentDocument(doc)
+    .then(update)
+    .catch((err) => console.warn('Falha ao salvar rascunho ao ir para a tela inicial:', err));
+};
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Preferences
@@ -289,6 +331,35 @@ export const useAppStore = create<AppState>((set, get) => ({
       localLastModified: doc.localLastModified ?? null,
       fileHandle: fileHandle || doc.fileHandle || null,
     };
+
+    const activeTabNow = state.tabs.find((t) => t.id === state.activeTabId);
+    if (activeTabNow && isHomeTab(activeTabNow)) {
+      const updatedTabs = state.tabs.map((t) =>
+        t.id === activeTabNow.id
+          ? {
+              ...t,
+              kind: 'doc' as const,
+              title: normalizedDoc.title,
+              isDirty: normalizedDoc.isDirty,
+              docId: targetDocId,
+              oneDriveItemId: normalizedDoc.oneDriveItemId,
+              fileHandle: normalizedDoc.fileHandle,
+              snapshot: normalizedDoc,
+            }
+          : t
+      );
+      set({
+        tabs: updatedTabs,
+        document: normalizedDoc,
+        fileHandle: normalizedDoc.fileHandle,
+        syncStatus: normalizedDoc.isDirty ? 'idle' : 'saved',
+        syncNotification: null,
+        cloudConflict: null,
+      });
+      saveLocalDocument(normalizedDoc);
+      persistTabsSession(activeTabNow.id, updatedTabs, state.tabGroups);
+      return activeTabNow.id;
+    }
 
     if (isCurrentBlank && state.activeTabId) {
       const updatedDoc = normalizedDoc;
@@ -368,6 +439,52 @@ export const useAppStore = create<AppState>((set, get) => ({
     return tabId;
   },
 
+  openHomeTab: () => {
+    const state = get();
+    const activeTab = state.tabs.find((t) => t.id === state.activeTabId);
+    if (activeTab && isHomeTab(activeTab)) return activeTab.id;
+
+    const existingHome = state.tabs.find((t) => isHomeTab(t));
+    if (existingHome) {
+      void get().switchTab(existingHome.id);
+      return existingHome.id;
+    }
+
+    flushPendingEditorContent();
+    const currentDoc = get().document;
+    const currentHandle = get().fileHandle;
+
+    const snapshotted = get().tabs.map((t) =>
+      t.id === state.activeTabId && currentDoc
+        ? {
+            ...t,
+            title: currentDoc.title,
+            isDirty: currentDoc.isDirty,
+            fileHandle: currentHandle,
+            snapshot: { ...currentDoc, fileHandle: currentHandle },
+          }
+        : t
+    );
+
+    const homeId = `tab-home-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const homeTab: TabItem = {
+      id: homeId,
+      kind: 'home',
+      title: HOME_TAB_TITLE,
+      isDirty: false,
+      docId: `home-${homeId}`,
+      oneDriveItemId: null,
+      fileHandle: null,
+      groupId: null,
+    };
+
+    const nextTabs = [...snapshotted, homeTab];
+    persistDraftOnLeave(currentDoc, (list) => set({ recentDocuments: list }));
+    set({ tabs: nextTabs, activeTabId: homeId, ...HOME_VIEW_STATE });
+    persistTabsSession(homeId, nextTabs, state.tabGroups);
+    return homeId;
+  },
+
   switchTab: async (tabId: string) => {
     const state = get();
     if (tabId === state.activeTabId) return;
@@ -391,6 +508,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const targetTab = updatedTabs.find((t) => t.id === tabId);
     if (!targetTab) return;
+
+    if (isHomeTab(targetTab)) {
+      persistDraftOnLeave(currentDoc, (list) => set({ recentDocuments: list }));
+      set({ tabs: updatedTabs, activeTabId: tabId, ...HOME_VIEW_STATE });
+      persistTabsSession(tabId, updatedTabs, state.tabGroups);
+      return;
+    }
 
     let targetDoc: DocumentState | null = targetTab.snapshot || null;
     let targetHandle = targetTab.fileHandle || null;
@@ -497,6 +621,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextIndex = tabIndex < remainingTabs.length ? tabIndex : remainingTabs.length - 1;
       const nextTab = remainingTabs[nextIndex];
 
+      if (isHomeTab(nextTab)) {
+        set({ tabs: remainingTabs, activeTabId: nextTab.id, tabGroups: nextGroups, ...HOME_VIEW_STATE });
+        persistTabsSession(nextTab.id, remainingTabs, nextGroups);
+        return;
+      }
+
       const nextDoc: DocumentState = nextTab.snapshot || {
         title: nextTab.title,
         content: '',
@@ -542,6 +672,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const state = get();
     const targetTab = state.tabs.find((t) => t.id === tabId);
+    if (targetTab && isHomeTab(targetTab)) return;
     if (targetTab && targetTab.title === finalTitle) {
       return;
     }
@@ -905,6 +1036,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           t.id === state.activeTabId
             ? {
                 ...t,
+                kind: 'doc' as const,
                 title: updated.title,
                 isDirty: updated.isDirty,
                 docId: updated.docId || t.docId,

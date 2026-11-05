@@ -5,11 +5,12 @@ import { TabItem, TabGroup, HighlightColor } from '../../types';
 import { getHighlightColorOption, HighlightPopover } from '../editor/HighlightPopover';
 import { MiddleEllipsisText } from '../ui/MiddleEllipsisText';
 import { saveCoordinator } from '../../services/saveCoordinator';
-import { X, Plus } from 'lucide-react';
+import { isHomeTab } from '../../services/documentUtils';
+import { X, Plus, Home } from 'lucide-react';
 
 interface TabBarProps {
   onRequestCloseTab: (e: React.MouseEvent, tab: TabItem) => void;
-  onNewFile: () => void;
+  onNewTab: () => void;
 }
 
 type TabRenderSegment =
@@ -18,7 +19,7 @@ type TabRenderSegment =
 
 type DropZonePosition = 'before' | 'group' | 'after';
 
-export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) => {
+export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) => {
   const {
     tabs,
     activeTabId,
@@ -120,6 +121,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
 
   // Tab renaming handlers
   const handleStartTabRename = (tab: TabItem) => {
+    if (isHomeTab(tab)) return;
     isCancelingRenameRef.current = false;
     setEditingTabId(tab.id);
     setEditingTitle(tab.title);
@@ -412,6 +414,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
   const renderTabPill = (tab: TabItem) => {
     const isActive = tab.id === activeTabId;
     const isEditing = editingTabId === tab.id;
+    const isHome = isHomeTab(tab);
     const isDropTarget = dropIndicator?.targetTabId === tab.id;
     const dropPos = isDropTarget ? dropIndicator.position : null;
 
@@ -460,7 +463,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
         }}
         onDoubleClick={(e) => {
           e.stopPropagation();
-          if (!isEditing) handleStartTabRename(tab);
+          if (!isEditing && !isHome) handleStartTabRename(tab);
         }}
         className={`group relative h-6 sm:h-6.5 px-2 py-0.5 rounded-md flex items-center gap-1.5 transition-all select-none shrink-0 cursor-pointer ${
           dropPos === 'before' ? 'border-l-2 border-l-blue-500 pl-1.5' : ''
@@ -473,7 +476,11 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
             ? 'bg-white dark:bg-slate-800 shadow-xs border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold'
             : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 font-medium'
         }`}
-        title={`${tab.title} — Arraste para as bordas para ordenar ou para o centro de outra aba para agrupar`}
+        title={
+          isHome
+            ? 'Tela inicial — Arraste para ordenar ou agrupar'
+            : `${tab.title} — Arraste para as bordas para ordenar ou para o centro de outra aba para agrupar`
+        }
       >
         {isEditing ? (
           <div className="inline-grid items-center min-w-[110px] sm:min-w-[140px] max-w-[calc(100vw-4.5rem)] sm:max-w-[680px]">
@@ -496,6 +503,11 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
               className="col-start-1 row-start-1 w-full min-w-0 select-text text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-blue-500 rounded px-1.5 py-0 outline-none shadow-xs"
             />
           </div>
+        ) : isHome ? (
+          <span className="flex items-center gap-1 text-[11px] sm:text-xs">
+            <Home className="w-3 h-3 shrink-0" />
+            <span>{tab.title}</span>
+          </span>
         ) : (
           <MiddleEllipsisText
             text={tab.title}
@@ -657,7 +669,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
         {/* New Tab (+) Button — also serves as drop target to pull a tab out of a group to the end */}
         <button
           type="button"
-          onClick={onNewFile}
+          onClick={onNewTab}
           onDragOver={(e) => {
             if (dragSource?.type === 'tab') {
               e.preventDefault();
@@ -672,7 +684,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewFile }) 
               setDropIndicator(null);
             }
           }}
-          title="Nova aba (novo arquivo em branco)"
+          title="Nova aba (tela inicial)"
           className="w-6 h-6 rounded flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-purple-600 dark:hover:text-purple-400 transition-colors shrink-0 cursor-pointer ml-0.5"
         >
           <Plus className="w-3.5 h-3.5" />

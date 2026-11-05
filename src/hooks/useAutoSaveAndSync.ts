@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { getOneDriveItemMetadata, downloadOneDriveFile } from '../services/oneDriveService';
 import { saveRecentDocument } from '../services/recentDocumentsService';
 import { saveCoordinator } from '../services/saveCoordinator';
+import { hasPendingBridgeChanges, flushPendingEditorContent } from '../services/editorContentBridge';
 
 const AUTOSAVE_IDLE_DELAY_MS = 3000; // 3 segundos de pausa após digitação em modo edição
 const AUTOSAVE_HIGHLIGHT_DELAY_MS = 1500; // 1.5 segundo após grifo em modo leitura
@@ -49,6 +50,9 @@ export function useAutoSaveAndSync() {
   // 1. Proteção contra fechamento acidental da página quando houver edições não salvas em qualquer aba aberta
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasPendingBridgeChanges()) {
+        flushPendingEditorContent();
+      }
       const state = useAppStore.getState();
       const hasAnyDirty = state.tabs.some((t) => t.isDirty) || Boolean(state.document?.isDirty);
       if (hasAnyDirty) {
@@ -79,17 +83,32 @@ export function useAutoSaveAndSync() {
       return;
     }
 
+    // Enquanto o TiptapEditor possuir edições em memória aguardando ociosidade real do usuário
+    // para serializar o Markdown (getMarkdown), não disparamos o timer curto do autosave para
+    // não travar a thread principal no meio da digitação, exclusão de caracteres ou formatação.
+    // Assim que o TiptapEditor concluir o flushContent(), currentDoc.content e currentDoc.revision
+    // mudarão na store com hasPendingBridgeChanges() === false, reexecutando este efeito.
+    if (hasPendingBridgeChanges()) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      return;
+    }
+
     const hasWritableSource = Boolean(currentDoc.oneDriveItemId || fileHandle || currentDoc.fileHandle);
     const hasPendingDraft = !hasWritableSource && (currentDoc.revision ?? 0) > (currentDoc.draftRevision ?? 0);
 
-    // Se for rascunho local com edições pendentes, confirma o rascunho no cache após breve pausa
+    // Se for rascunho local com edições já consolidadas na store, confirma no cache após breve pausa
     if (hasPendingDraft) {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
       debounceTimerRef.current = setTimeout(() => {
         debounceTimerRef.current = null;
-        saveCoordinator.saveDraft();
+        if (!hasPendingBridgeChanges()) {
+          saveCoordinator.saveDraft();
+        }
       }, DRAFT_SYNC_DELAY_MS);
 
       return () => {
@@ -121,6 +140,10 @@ export function useAutoSaveAndSync() {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
+      }
+      if (hasPendingBridgeChanges()) {
+        // Usuário voltou a editar no editor; aguarda o flush ocioso do TiptapEditor
+        return;
       }
       if (maxWaitTimerRef.current) {
         clearTimeout(maxWaitTimerRef.current);
@@ -202,10 +225,6 @@ export function useAutoSaveAndSync() {
       handleImmediateSaveIfDirty();
     };
 
-    const handleBlur = () => {
-      handleImmediateSaveIfDirty();
-    };
-
     const handleOnline = () => {
       // Reconectou: tenta enviar imediatamente qualquer alteração pendente
       retryAttemptRef.current = 0;
@@ -214,13 +233,11 @@ export function useAutoSaveAndSync() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pagehide', handlePageHide);
-    window.addEventListener('blur', handleBlur);
     window.addEventListener('online', handleOnline);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
-      window.removeEventListener('blur', handleBlur);
       window.removeEventListener('online', handleOnline);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };

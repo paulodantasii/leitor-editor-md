@@ -80,6 +80,8 @@ Monitorado continuamente pelo hook `useAutoSaveAndSync.ts`:
      - *Salvar no OneDrive*: Abre em modo "Salvar como" e fecha logo após a confirmação.
      - *Salvar no Dispositivo*: Dispara o seletor nativo do sistema e fecha após salvar.
      - *Fechar mantendo como Rascunho*: Mantém o documento no cache local com o selo **Rascunho** sem nenhuma perda.
+5. **Aba Início (Nova Aba)**:
+   - O botão **+** da barra de abas abre a aba **Início** (tela inicial). Existe no máximo uma aba Início por vez; ao escolher qualquer opção na Home (cartões rápidos, Recentes, etc.), ela é convertida diretamente na aba de documento correspondente. O botão "Novo" do menu e o card "Novo Documento" continuam criando um arquivo em branco.
 
 ---
 
