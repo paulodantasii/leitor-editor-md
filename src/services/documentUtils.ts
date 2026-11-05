@@ -1,7 +1,7 @@
 import type { TabItem } from '../types';
 
 export const DEFAULT_DOCUMENT_TITLE = 'Sem Título.md';
-export const HOME_TAB_TITLE = 'Início';
+export const HOME_TAB_TITLE = 'Nova guia';
 
 export const isHomeTab = (tab: Pick<TabItem, 'kind'> | null | undefined): boolean =>
   tab?.kind === 'home';

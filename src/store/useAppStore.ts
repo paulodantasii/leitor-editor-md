@@ -217,10 +217,11 @@ if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
   initialActiveTabId = savedSession.activeTabId || savedSession.tabs[0].id;
   initialTabs = savedSession.tabs.map((t) => {
     const isCurActive = t.id === initialActiveTabId;
+    const kind = t.kind ?? 'doc';
     return {
       id: t.id,
-      kind: t.kind ?? 'doc',
-      title: t.title,
+      kind,
+      title: kind === 'home' ? HOME_TAB_TITLE : t.title,
       isDirty: t.isDirty,
       docId: t.docId,
       oneDriveItemId: t.oneDriveItemId,

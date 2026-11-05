@@ -4,7 +4,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { RecentDocumentItem } from '../../types';
 import {
   Highlighter,
-  History,
   FolderOpen,
   FileText,
   FilePlus,
@@ -16,7 +15,7 @@ import {
   Download,
 } from 'lucide-react';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
-import { SAMPLE_LEGISLATION_DOC } from '../sampleDocs';
+import { OpenSourceModal } from '../modals/OpenSourceModal';
 import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 
 export interface HomeScreenProps {
@@ -26,7 +25,6 @@ export interface HomeScreenProps {
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onCloseOverlay }) => {
   const {
-    document: currentDoc,
     openTab,
     setIsOneDriveModalOpen,
     createNewDocument,
@@ -35,10 +33,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
     openRecentDocument,
     setIsRecentModalOpen,
     setIsInstallModalOpen,
-    loadCachedDocument,
   } = useAppStore(
     useShallow((state) => ({
-      document: state.document,
       openTab: state.openTab,
       setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
       createNewDocument: state.createNewDocument,
@@ -47,27 +43,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
       openRecentDocument: state.openRecentDocument,
       setIsRecentModalOpen: state.setIsRecentModalOpen,
       setIsInstallModalOpen: state.setIsInstallModalOpen,
-      loadCachedDocument: state.loadCachedDocument,
     }))
   );
 
   const { isStandalone } = usePwaInstall();
 
-  const [mostRecentTitle, setMostRecentTitle] = useState<string>('Amostra da Legislação');
+  const [isOpenSourceModalOpen, setIsOpenSourceModalOpen] = useState(false);
 
   useEffect(() => {
     loadRecentDocuments();
   }, [loadRecentDocuments]);
-
-  useEffect(() => {
-    if (currentDoc?.title) {
-      setMostRecentTitle(currentDoc.title);
-    } else if (recentDocuments.length > 0) {
-      setMostRecentTitle(recentDocuments[0].title);
-    } else {
-      setMostRecentTitle('Amostra - Vade Mecum');
-    }
-  }, [currentDoc?.title, recentDocuments]);
 
   const handleFinishAction = () => {
     try {
@@ -78,11 +63,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
     if (isOverlay && onCloseOverlay) {
       onCloseOverlay();
     }
-  };
-
-  const handleContinueLast = async () => {
-    await loadCachedDocument();
-    handleFinishAction();
   };
 
   const handleOpenFileClick = async () => {
@@ -187,36 +167,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
       </p>
 
       {/* Primary Action Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4 w-full mb-4 sm:mb-5">
-        {/* Card 1: Continuar Último / Amostra */}
-        <button
-          type="button"
-          onClick={handleContinueLast}
-          className="group relative flex flex-col items-center justify-between p-4 lg:p-5 bg-slate-50/80 dark:bg-slate-800/60 hover:bg-blue-50/80 dark:hover:bg-slate-800 border-2 border-slate-200/90 dark:border-slate-700/80 hover:border-blue-500 dark:hover:border-blue-500 rounded-2xl transition-all duration-200 text-center shadow-sm hover:shadow-md cursor-pointer hover:-translate-y-0.5"
-        >
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-2.5 sm:mb-3 group-hover:scale-110 transition-transform">
-            <History className="w-6 h-6" />
-          </div>
-
-          <div className="space-y-1 mb-2.5 sm:mb-3">
-            <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-              Continuar Último
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
-              Retomar o documento salvo no cache ou histórico
-            </p>
-          </div>
-
-          <div className="w-full pt-2.5 sm:pt-3 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 min-w-0">
-            <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-            <MiddleEllipsisText text={mostRecentTitle} className="max-w-[140px]" />
-          </div>
-        </button>
-
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4 w-full max-w-2xl mb-4 sm:mb-5">
         {/* Card 2: Abrir Arquivo */}
         <button
           type="button"
-          onClick={handleOpenFileClick}
+          onClick={() => setIsOpenSourceModalOpen(true)}
           className="group relative flex flex-col items-center justify-between p-4 lg:p-5 bg-slate-50/80 dark:bg-slate-800/60 hover:bg-emerald-50/80 dark:hover:bg-slate-800 border-2 border-slate-200/90 dark:border-slate-700/80 hover:border-emerald-500 dark:hover:border-emerald-500 rounded-2xl transition-all duration-200 text-center shadow-sm hover:shadow-md cursor-pointer hover:-translate-y-0.5"
         >
           <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-2.5 sm:mb-3 group-hover:scale-110 transition-transform">
@@ -228,36 +183,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
               Abrir Arquivo
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
-              Carregar um arquivo .md do seu dispositivo
+              Carregar do dispositivo, OneDrive ou recentes
             </p>
           </div>
 
           <div className="w-full pt-2.5 sm:pt-3 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-center text-xs font-semibold text-emerald-600 dark:text-emerald-400">
             Escolher Arquivo...
-          </div>
-        </button>
-
-        {/* Card 3: OneDrive */}
-        <button
-          type="button"
-          onClick={handleOpenOneDrive}
-          className="group relative flex flex-col items-center justify-between p-4 lg:p-5 bg-slate-50/80 dark:bg-slate-800/60 hover:bg-sky-50/80 dark:hover:bg-slate-800 border-2 border-slate-200/90 dark:border-slate-700/80 hover:border-sky-500 dark:hover:border-sky-500 rounded-2xl transition-all duration-200 text-center shadow-sm hover:shadow-md cursor-pointer hover:-translate-y-0.5"
-        >
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-sky-100 dark:bg-sky-900/50 text-sky-600 dark:text-sky-400 flex items-center justify-center mb-2.5 sm:mb-3 group-hover:scale-110 transition-transform">
-            <Cloud className="w-6 h-6" />
-          </div>
-
-          <div className="space-y-1 mb-2.5 sm:mb-3">
-            <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
-              OneDrive
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
-              Acessar ou salvar na nuvem da Microsoft
-            </p>
-          </div>
-
-          <div className="w-full pt-2.5 sm:pt-3 border-t border-slate-200/70 dark:border-slate-700/70 flex items-center justify-center text-xs font-semibold text-sky-600 dark:text-sky-400">
-            Abrir da Nuvem...
           </div>
         </button>
 
@@ -291,7 +222,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
         <div className="w-full pt-3.5 sm:pt-4 border-t border-slate-200 dark:border-slate-800 text-left">
           <div className="flex items-center justify-between mb-2 px-1">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Arquivos Recentes em Cache ({recentDocuments.length}/30)
+              Arquivos Recentes
             </span>
             <button
               type="button"
@@ -372,6 +303,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
           </button>
         </div>
       )}
+
+      <OpenSourceModal
+        isOpen={isOpenSourceModalOpen}
+        onClose={() => setIsOpenSourceModalOpen(false)}
+        onOpenFromLocal={handleOpenFileClick}
+        onOpenFromOneDrive={handleOpenOneDrive}
+        onOpenFromRecents={() => {
+          handleFinishAction();
+          setIsRecentModalOpen(true);
+        }}
+        recentCount={recentDocuments.length}
+      />
     </div>
   );
 

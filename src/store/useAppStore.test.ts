@@ -622,13 +622,13 @@ describe('Aba Início (Nova Aba)', () => {
     expect(state.tabs[0].kind).toBe('home');
   });
 
-  it('renameTab ignora a Início mantendo o título Início', () => {
+  it('renameTab ignora a Nova guia mantendo o título Nova guia', () => {
     useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
     const homeId = useAppStore.getState().openHomeTab();
 
     useAppStore.getState().renameTab(homeId, 'Outro');
     const homeTab = useAppStore.getState().tabs.find((t) => t.id === homeId);
-    expect(homeTab?.title).toBe('Início');
+    expect(homeTab?.title).toBe('Nova guia');
   });
 
   it('persistência salva aba com kind: home e activeTabId correto', () => {
