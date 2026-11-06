@@ -23,6 +23,10 @@
     --text-primary: #f8fafc;
   }
 
+  html {
+    background-color: var(--bg-primary);
+  }
+
   body {
     background-color: var(--bg-primary);
     color: var(--text-primary);
