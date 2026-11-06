@@ -11,7 +11,7 @@ export function getCurrentBuildId(): string {
  * Garante que qualquer edição pendente no editor ou no debounce local
  * seja persistida sincronamente no localStorage antes de recarregar a página.
  */
-function flushUserWorkBeforeReload(): void {
+export function flushUserWorkBeforeReload(): void {
   try {
     flushPendingEditorContent();
   } catch (err) {

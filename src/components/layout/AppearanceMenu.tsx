@@ -3,6 +3,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { Sliders, Sun, Moon, Type, Maximize2 } from 'lucide-react';
 import { FontFamily, TextWidth } from '../../types';
+import { reloadForThemeChange, shouldReloadForThemeChange } from '../../services/themeReloadService';
 
 export const AppearanceMenu: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -32,6 +33,9 @@ export const AppearanceMenu: React.FC = () => {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
+    }
+    if (shouldReloadForThemeChange()) {
+      void reloadForThemeChange(newTheme);
     }
   };
 
