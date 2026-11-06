@@ -1,20 +1,10 @@
 import { useAppStore } from '../store/useAppStore';
-import type { UserPreferences } from '../types';
 import { flushUserWorkBeforeReload } from './appUpdateService';
 import { saveTabScrollPosition } from './tabScrollMemory';
-
-type ThemeName = UserPreferences['theme'];
 
 export const THEME_RELOAD_SNAPSHOT_KEY = 'leitor_md_theme_reload_snapshot_v1';
 
 const SNAPSHOT_MAX_AGE_MS = 15_000;
-const FADE_OUT_MS = 180;
-/** Deve coincidir com a duração da transição de `body::after` definida em index.html. */
-const BOOT_FADE_MS = 240;
-const COVER_COLORS: Readonly<Record<ThemeName, string>> = {
-  light: '#f7f7f7',
-  dark: '#0f172a',
-};
 
 export interface ThemeReloadSnapshot {
   readonly tabId: string;
@@ -119,34 +109,6 @@ function persistSnapshot(): void {
   }
 }
 
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
-
-function showFadeCover(nextTheme: ThemeName): Promise<void> {
-  return new Promise((resolve) => {
-    const cover = document.createElement('div');
-    cover.setAttribute('aria-hidden', 'true');
-    Object.assign(cover.style, {
-      position: 'fixed',
-      inset: '0',
-      zIndex: '2147483647',
-      backgroundColor: COVER_COLORS[nextTheme],
-      opacity: '0',
-      transition: `opacity ${FADE_OUT_MS}ms ease-out`,
-    });
-    document.body.appendChild(cover);
-
-    requestAnimationFrame(() => {
-      cover.style.opacity = '1';
-      window.setTimeout(resolve, FADE_OUT_MS + 30);
-    });
-  });
-}
-
 /** Indica se a troca de tema precisa recarregar a página para atualizar a barra de status do iOS. */
 export function shouldReloadForThemeChange(): boolean {
   return isStandalonePwa();
@@ -154,23 +116,14 @@ export function shouldReloadForThemeChange(): boolean {
 
 /**
  * Recarrega a página de forma leve após a troca de tema: salva o trabalho pendente e o
- * estado de leitura, escurece/clareia a tela em fade e faz um `reload()` simples
- * (sem desregistrar Service Worker nem limpar cache).
+ * estado de leitura e faz um `reload()` simples (sem desregistrar Service Worker nem limpar cache).
  */
-export async function reloadForThemeChange(nextTheme: ThemeName): Promise<void> {
+export function reloadForThemeChange(): void {
   if (isReloadScheduled) return;
   isReloadScheduled = true;
 
   flushUserWorkBeforeReload();
   persistSnapshot();
-
-  try {
-    if (!prefersReducedMotion()) {
-      await showFadeCover(nextTheme);
-    }
-  } catch (err) {
-    console.warn('Falha na animação de troca de tema:', err);
-  }
 
   window.location.reload();
 }
@@ -200,17 +153,4 @@ export function restoreStateAfterThemeReload(): boolean {
   saveTabScrollPosition(snapshot.tabId, snapshot.scrollY, snapshot.docId ?? undefined);
   useAppStore.setState(normalizeEditorModes(snapshot));
   return true;
-}
-
-/** Remove a cobertura de boot (definida em index.html) com fade-in, após o primeiro paint do React. */
-export function finishThemeBootCover(): void {
-  const root = document.documentElement;
-  if (!root.hasAttribute('data-theme-boot')) return;
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      root.setAttribute('data-theme-boot', 'done');
-      window.setTimeout(() => root.removeAttribute('data-theme-boot'), BOOT_FADE_MS + 40);
-    });
-  });
 }

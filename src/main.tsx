@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
-import { finishThemeBootCover, restoreStateAfterThemeReload } from './services/themeReloadService';
+import { restoreStateAfterThemeReload } from './services/themeReloadService';
 
 restoreStateAfterThemeReload();
 
@@ -11,5 +11,3 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <App />
   </React.StrictMode>
 );
-
-finishThemeBootCover();

@@ -31,14 +31,13 @@ function createStorage(initial: Record<string, string> = {}) {
   };
 }
 
-function stubBrowser(options: { reducedMotion: boolean; storage?: ReturnType<typeof createStorage> }) {
+function stubBrowser(options: { storage?: ReturnType<typeof createStorage> } = {}) {
   const reload = vi.fn();
   const storage = options.storage ?? createStorage();
   vi.stubGlobal('window', {
     scrollY: 120.4,
     location: { reload },
-    matchMedia: (q: string) => ({ matches: q.includes('reduced-motion') ? options.reducedMotion : false }),
-    setTimeout: (fn: () => void) => setTimeout(fn, 0),
+    matchMedia: () => ({ matches: false }),
   });
   vi.stubGlobal('sessionStorage', storage);
   vi.stubGlobal('navigator', {});
@@ -59,7 +58,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -124,8 +122,8 @@ describe('parseThemeReloadSnapshot', () => {
 });
 
 describe('reloadForThemeChange', () => {
-  it('com movimento reduzido: flush, snapshot e um reload', async () => {
-    const { reload, storage } = stubBrowser({ reducedMotion: true });
+  it('faz flush, grava o snapshot e recarrega uma vez', async () => {
+    const { reload, storage } = stubBrowser();
     storeState.activeTabId = 'tab-1';
     storeState.document = { docId: 'doc-1' };
     storeState.isEditable = true;
@@ -133,7 +131,7 @@ describe('reloadForThemeChange', () => {
     storeState.isSourceMode = false;
 
     const { reloadForThemeChange } = await loadService();
-    await reloadForThemeChange('dark');
+    reloadForThemeChange();
 
     expect(flushMock).toHaveBeenCalledTimes(1);
     expect(storage.getItem(KEY)).not.toBeNull();
@@ -141,12 +139,12 @@ describe('reloadForThemeChange', () => {
   });
 
   it('chamadas repetidas não disparam segundo reload', async () => {
-    const { reload } = stubBrowser({ reducedMotion: true });
+    const { reload } = stubBrowser();
     storeState.activeTabId = 'tab-1';
 
     const { reloadForThemeChange } = await loadService();
-    await reloadForThemeChange('dark');
-    await reloadForThemeChange('light');
+    reloadForThemeChange();
+    reloadForThemeChange();
 
     expect(reload).toHaveBeenCalledTimes(1);
     expect(flushMock).toHaveBeenCalledTimes(1);
@@ -168,7 +166,7 @@ describe('restoreStateAfterThemeReload', () => {
 
   it('restaura scroll e modos na mesma aba/doc e remove a chave', async () => {
     const storage = createStorage({ [KEY]: snapshot() });
-    stubBrowser({ reducedMotion: true, storage });
+    stubBrowser({ storage });
     storeState.activeTabId = 'tab-1';
     storeState.document = { docId: 'doc-1' };
 
@@ -185,7 +183,7 @@ describe('restoreStateAfterThemeReload', () => {
 
   it('aba ou doc diferentes: retorna false e não altera o estado', async () => {
     const storage = createStorage({ [KEY]: snapshot({ tabId: 'outra' }) });
-    stubBrowser({ reducedMotion: true, storage });
+    stubBrowser({ storage });
     storeState.activeTabId = 'tab-1';
     storeState.document = { docId: 'doc-1' };
 
@@ -198,14 +196,14 @@ describe('restoreStateAfterThemeReload', () => {
 
 describe('shouldReloadForThemeChange', () => {
   it('true com navigator.standalone', async () => {
-    stubBrowser({ reducedMotion: false });
+    stubBrowser();
     vi.stubGlobal('navigator', { standalone: true });
     const { shouldReloadForThemeChange } = await loadService();
     expect(shouldReloadForThemeChange()).toBe(true);
   });
 
   it('false sem standalone', async () => {
-    stubBrowser({ reducedMotion: false });
+    stubBrowser();
     const { shouldReloadForThemeChange } = await loadService();
     expect(shouldReloadForThemeChange()).toBe(false);
   });

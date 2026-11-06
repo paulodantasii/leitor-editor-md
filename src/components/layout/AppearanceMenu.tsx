@@ -35,7 +35,7 @@ export const AppearanceMenu: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
     if (shouldReloadForThemeChange()) {
-      void reloadForThemeChange(newTheme);
+      reloadForThemeChange();
     }
   };
 
