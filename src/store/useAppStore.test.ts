@@ -642,4 +642,17 @@ describe('Aba Início (Nova Aba)', () => {
     expect(savedHome?.kind).toBe('home');
     expect(parsed.activeTabId).toBe(homeId);
   });
+
+  it('loadCachedDocument não carrega nenhum documento de exemplo quando o cache e histórico estiverem vazios', async () => {
+    useAppStore.getState().closeDocument();
+    expect(useAppStore.getState().document).toBeNull();
+    expect(useAppStore.getState().tabs).toHaveLength(0);
+
+    await useAppStore.getState().loadCachedDocument();
+
+    const state = useAppStore.getState();
+    expect(state.document).toBeNull();
+    expect(state.tabs).toHaveLength(0);
+    expect(state.activeTabId).toBeNull();
+  });
 });

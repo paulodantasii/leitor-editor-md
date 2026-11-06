@@ -29,7 +29,6 @@ import {
 } from '../services/recentDocumentsService';
 import { isBlankUntitledDocument, isHomeTab, HOME_TAB_TITLE } from '../services/documentUtils';
 import { flushPendingEditorContent } from '../services/editorContentBridge';
-import { SAMPLE_LEGISLATION_DOC } from '../components/sampleDocs';
 import { renameOneDriveFile } from '../services/oneDriveService';
 
 interface AppState {
@@ -1169,18 +1168,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch {
       // ignore
     }
-
-    get().openTab({
-      title: 'Constituição Federal - Amostra Vade Mecum.md',
-      content: SAMPLE_LEGISLATION_DOC,
-      oneDriveItemId: null,
-      lastSavedAt: null,
-      isDirty: false,
-      revision: 0,
-      draftRevision: 0,
-      sourceRevision: 0,
-      docId: 'doc-sample',
-    });
   },
   createNewDocument: () => {
     // Documento efêmero: NÃO é gravado no localStorage nem no histórico enquanto estiver vazio.
