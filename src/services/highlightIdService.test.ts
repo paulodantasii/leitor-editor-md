@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   formatSequentialHighlightId,
   parseSequentialHighlightId,
   scanHighlightsInMarkdown,
   scanHighlightsInProseMirrorDoc,
   generateNextHighlightId,
+  primeHighlightIdScope,
   findLatestHighlightInfo,
   resetHighlightIdMemory,
 } from './highlightIdService';
@@ -141,5 +142,22 @@ describe('highlightIdService — IDs sequenciais Base-36 e localização do últ
       pos: 100,
     });
     expect(scanHighlightsInProseMirrorDoc(multiNodeDoc).sequentialMax).toBe(2);
+  });
+
+  it('usa caminho rápido O(1) sem varrer doc.descendants após primeHighlightIdScope em árvore ProseMirror real', () => {
+    const descendantsSpy = vi.fn();
+    const realLikeDoc = {
+      nodeSize: 50000,
+      descendants: descendantsSpy,
+    };
+
+    primeHighlightIdScope('doc-gigante', 42);
+
+    const next1 = generateNextHighlightId(realLikeDoc, 'doc-gigante');
+    const next2 = generateNextHighlightId(realLikeDoc, 'doc-gigante');
+
+    expect(next1).toBe(formatSequentialHighlightId(43));
+    expect(next2).toBe(formatSequentialHighlightId(44));
+    expect(descendantsSpy).not.toHaveBeenCalled();
   });
 });

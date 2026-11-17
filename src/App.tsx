@@ -51,11 +51,14 @@ export const App: React.FC = () => {
     document.title = cleanTitle ? `${cleanTitle} - Leitor & Editor MD` : 'Leitor & Editor Markdown PWA';
   }, [docTitle]);
 
-  // Ao alternar para a tela inicial (sem documento ativo), posiciona a janela no topo
+  // Ao alternar para a tela inicial (sem documento ativo), posiciona a janela no topo;
+  // quando houver documento stub (storedInDb: true) após recarga, hidrata do IndexedDB.
   useEffect(() => {
     if (!hasDocument) {
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      return;
     }
+    void useAppStore.getState().hydrateActiveDocumentFromDb();
   }, [hasDocument]);
 
   // Global Keyboard Shortcuts (Press 'G' to toggle Highlight mode)

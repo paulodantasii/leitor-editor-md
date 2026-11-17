@@ -86,32 +86,44 @@ export const ReadingProgress: React.FC = () => {
   }, [docId, docContent, isEditable]);
 
   useEffect(() => {
-    const handleScroll = () => {
+    let scrollRafId: number | null = null;
+
+    const updateScrollProgress = () => {
       const totalHeight = document.documentElement.scrollHeight - window.innerHeight;
-      if (totalHeight > 0) {
-        const progress = Math.min(100, Math.max(0, (window.scrollY / totalHeight) * 100));
-        setScrollProgress(Math.round(progress));
-      } else {
-        setScrollProgress(100);
-      }
+      const nextProgress =
+        totalHeight > 0
+          ? Math.round(Math.min(100, Math.max(0, (window.scrollY / totalHeight) * 100)))
+          : 100;
+      setScrollProgress((prev) => (prev === nextProgress ? prev : nextProgress));
     };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    const scheduleScrollProgress = () => {
+      if (scrollRafId !== null) return;
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        updateScrollProgress();
+      });
+    };
+
+    window.addEventListener('scroll', scheduleScrollProgress, { passive: true });
 
     // Recalcula imediatamente ao montar ou trocar de documento
-    handleScroll();
-    const rafId = requestAnimationFrame(handleScroll);
+    updateScrollProgress();
+    const initialRafId = requestAnimationFrame(updateScrollProgress);
 
     // Observa mudanças reais de layout no corpo do documento e no container raiz
-    const resizeObserver = new ResizeObserver(() => handleScroll());
+    const resizeObserver = new ResizeObserver(() => scheduleScrollProgress());
     resizeObserver.observe(document.body);
     if (document.documentElement) {
       resizeObserver.observe(document.documentElement);
     }
 
     return () => {
-      cancelAnimationFrame(rafId);
-      window.removeEventListener('scroll', handleScroll);
+      cancelAnimationFrame(initialRafId);
+      if (scrollRafId !== null) {
+        cancelAnimationFrame(scrollRafId);
+      }
+      window.removeEventListener('scroll', scheduleScrollProgress);
       resizeObserver.disconnect();
     };
   }, [docId]);

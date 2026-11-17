@@ -206,6 +206,11 @@ mark.gray {
   --paragraph-spacing: 1.25em;
 }
 
+/* Isola layout e estilo de cada bloco para que edições locais não forcem reflow no documento inteiro */
+.ProseMirror > * {
+  contain: layout style;
+}
+
 /* Durante a restauração programática de scroll entre abas, desativa temporariamente
    o scroll-anchoring nativo para que o navegador aplique window.scrollTo sem interferência. */
 html.scroll-restoring,

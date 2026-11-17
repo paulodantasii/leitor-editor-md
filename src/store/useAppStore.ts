@@ -22,6 +22,8 @@ import {
 } from '../services/storage';
 import {
   getRecentDocuments,
+  getDocumentFullData,
+  getDocumentIdentifier,
   saveRecentDocument,
   deleteRecentDocument as deleteRecentFromDb,
   loadRecentDocumentWithCloudSync,
@@ -70,6 +72,7 @@ interface AppState {
   updateDocumentContent: (content: string) => void;
   markDocumentDirty: () => void;
   loadCachedDocument: () => Promise<void>;
+  hydrateActiveDocumentFromDb: () => Promise<void>;
   createNewDocument: () => void;
   closeDocument: () => void;
 
@@ -329,6 +332,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       sourceRevision: srcRev,
       draftRevision: draftRev,
       docId: targetDocId,
+      ...(doc.storedInDb ? { storedInDb: true } : {}),
       cloudLastModified: doc.cloudLastModified ?? null,
       cloudETag: doc.cloudETag ?? null,
       localLastModified: doc.localLastModified ?? null,
@@ -522,32 +526,57 @@ export const useAppStore = create<AppState>((set, get) => ({
     let targetDoc: DocumentState | null = targetTab.snapshot || null;
     let targetHandle = targetTab.fileHandle || null;
 
-    if (!targetDoc) {
+    if (!targetDoc || (targetDoc.storedInDb && !targetDoc.content)) {
       try {
         const recents = await getRecentDocuments();
+        const candidateId = getDocumentIdentifier({
+          docId: targetTab.docId,
+          oneDriveItemId: targetTab.oneDriveItemId,
+          title: targetTab.title,
+        });
         const match = recents.find(
           (r) =>
             (targetTab.oneDriveItemId && r.oneDriveItemId === targetTab.oneDriveItemId) ||
             r.id === targetTab.docId ||
+            r.id === candidateId ||
+            r.id === `draft:${targetTab.docId}` ||
+            r.id === `file:${targetTab.docId}` ||
             r.title === targetTab.title
         );
         if (match) {
+          const fullDoc = await getDocumentFullData(match.id);
           targetDoc = {
+            ...(targetDoc || {}),
             title: match.title,
-            content: match.content,
+            content: fullDoc?.content || match.content || '',
+            storedInDb: false,
             oneDriveItemId: match.oneDriveItemId,
             lastSavedAt: match.lastSavedAt,
             isDirty: targetTab.isDirty,
-            revision: match.revision ?? 0,
-            draftRevision: match.draftRevision ?? 0,
-            sourceRevision: match.sourceRevision ?? 0,
+            revision: fullDoc?.revision ?? match.revision ?? targetDoc?.revision ?? 0,
+            draftRevision: fullDoc?.draftRevision ?? match.draftRevision ?? targetDoc?.draftRevision ?? 0,
+            sourceRevision: fullDoc?.sourceRevision ?? match.sourceRevision ?? targetDoc?.sourceRevision ?? 0,
             docId: targetTab.docId,
-            cloudLastModified: match.cloudLastModified,
-            cloudETag: match.cloudETag,
-            localLastModified: match.localLastModified,
-            fileHandle: match.fileHandle,
+            cloudLastModified: fullDoc?.cloudLastModified ?? match.cloudLastModified,
+            cloudETag: fullDoc?.cloudETag ?? match.cloudETag,
+            localLastModified: fullDoc?.localLastModified ?? match.localLastModified,
+            fileHandle: fullDoc?.fileHandle ?? match.fileHandle ?? targetHandle,
           };
-          targetHandle = match.fileHandle || null;
+          targetHandle = targetDoc.fileHandle || null;
+        } else {
+          const fallbackFull =
+            (await getDocumentFullData(candidateId)) ||
+            (await getDocumentFullData(`draft:${targetTab.docId}`)) ||
+            (await getDocumentFullData(`file:${targetTab.docId}`));
+          if (fallbackFull && fallbackFull.content) {
+            targetDoc = {
+              ...(targetDoc || {}),
+              ...fallbackFull,
+              docId: targetTab.docId,
+              storedInDb: false,
+            };
+            targetHandle = fallbackFull.fileHandle ?? targetHandle;
+          }
         }
       } catch (err) {
         console.warn('Erro ao restaurar documento da aba do IndexedDB:', err);
@@ -1156,6 +1185,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
         loaded.fileHandle || null
       );
+      await get().hydrateActiveDocumentFromDb();
       return;
     }
 
@@ -1167,6 +1197,76 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } catch {
       // ignore
+    }
+  },
+  hydrateActiveDocumentFromDb: async () => {
+    const doc = get().document;
+    if (!doc) return;
+    if (doc.content && doc.content.length > 0 && !doc.storedInDb) return;
+    if (isBlankUntitledDocument(doc) && !doc.storedInDb) return;
+
+    try {
+      const directId = getDocumentIdentifier(doc);
+      let fullData = await getDocumentFullData(directId);
+
+      if (!fullData || !fullData.content) {
+        if (doc.docId) {
+          fullData =
+            (await getDocumentFullData(doc.docId)) ||
+            (await getDocumentFullData(`draft:${doc.docId}`)) ||
+            (await getDocumentFullData(`file:${doc.docId}`));
+        }
+      }
+
+      if (!fullData || !fullData.content) {
+        const recents = await getRecentDocuments();
+        const match = recents.find(
+          (r) =>
+            (doc.oneDriveItemId && r.oneDriveItemId === doc.oneDriveItemId) ||
+            r.id === doc.docId ||
+            r.id === directId ||
+            (doc.docId && (r.id === `draft:${doc.docId}` || r.id === `file:${doc.docId}`)) ||
+            r.title === doc.title
+        );
+        if (match) {
+          fullData = await getDocumentFullData(match.id);
+        }
+      }
+
+      if (fullData && fullData.content) {
+        const latestState = get();
+        if (!latestState.document || latestState.document.docId !== doc.docId) return;
+
+        const hydratedDoc: DocumentState = {
+          ...latestState.document,
+          content: fullData.content,
+          storedInDb: false,
+          revision: latestState.document.revision ?? fullData.revision ?? 0,
+          sourceRevision: latestState.document.sourceRevision ?? fullData.sourceRevision ?? 0,
+          draftRevision: latestState.document.draftRevision ?? fullData.draftRevision ?? 0,
+          cloudLastModified: latestState.document.cloudLastModified ?? fullData.cloudLastModified ?? null,
+          cloudETag: latestState.document.cloudETag ?? fullData.cloudETag ?? null,
+          fileHandle: latestState.document.fileHandle ?? fullData.fileHandle ?? null,
+        };
+
+        const updatedTabs = latestState.tabs.map((t) =>
+          t.id === latestState.activeTabId
+            ? {
+                ...t,
+                fileHandle: hydratedDoc.fileHandle ?? t.fileHandle,
+                snapshot: hydratedDoc,
+              }
+            : t
+        );
+
+        set({
+          document: hydratedDoc,
+          tabs: updatedTabs,
+          fileHandle: hydratedDoc.fileHandle ?? latestState.fileHandle,
+        });
+      }
+    } catch (err) {
+      console.warn('Falha ao hidratar documento completo do IndexedDB:', err);
     }
   },
   createNewDocument: () => {

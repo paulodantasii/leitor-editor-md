@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { HighlightColor, HighlightColorOption } from '../../types';
 import { Trash2 } from 'lucide-react';
 
@@ -30,6 +30,7 @@ export const HighlightColorSwatches: React.FC<HighlightColorSwatchesProps> = ({
   size = 'md',
 }) => {
   const sizeClass = size === 'sm' ? 'w-5 h-5' : 'w-6 h-6';
+  const lastTouchTimeRef = useRef(0);
 
   return (
     <div className="flex items-center gap-1.5">
@@ -40,11 +41,13 @@ export const HighlightColorSwatches: React.FC<HighlightColorSwatchesProps> = ({
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (Date.now() - lastTouchTimeRef.current < 350) return;
             onSelectColor(c.id);
           }}
           onTouchEnd={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            lastTouchTimeRef.current = Date.now();
             onSelectColor(c.id);
           }}
           onMouseDown={(e) => e.preventDefault()}
@@ -62,14 +65,13 @@ interface HighlightPopoverProps {
   activeColor?: HighlightColor;
   onSelectColor: (color: HighlightColor) => void;
   onRemoveHighlight: () => void;
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
   activeColor,
   onSelectColor,
   onRemoveHighlight,
-  onClose,
 }) => {
   return (
     <div
@@ -83,10 +85,7 @@ export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
       <div className="pr-2 border-r border-slate-200 dark:border-slate-700">
         <HighlightColorSwatches
           activeColor={activeColor}
-          onSelectColor={(color) => {
-            onClose();
-            onSelectColor(color);
-          }}
+          onSelectColor={onSelectColor}
           titlePrefix="Grifar de"
           size="md"
         />

@@ -53,8 +53,44 @@ import { HIGHLIGHT_COLORS } from './HighlightPopover';
 
 interface EditorToolbarProps {
   editor: Editor | null;
+  docId?: string;
   isSourceMode?: boolean;
   onToggleSourceMode?: () => void;
+}
+
+function computeToolbarStateKey(editor: Editor): string {
+  const { selection, storedMarks } = editor.state;
+  const { empty, from, to, $from } = selection;
+
+  let ancestorFlags = 0;
+  let activeAlign = '';
+  for (let d = $from.depth; d > 0; d--) {
+    const node = $from.node(d);
+    const name = node.type.name;
+    if (!activeAlign && node.attrs?.textAlign) {
+      activeAlign = String(node.attrs.textAlign);
+    }
+    if (name === 'bulletList') ancestorFlags |= 1;
+    else if (name === 'orderedList') ancestorFlags |= 2;
+    else if (name === 'blockquote') ancestorFlags |= 4;
+    else if (name === 'table') ancestorFlags |= 8;
+  }
+
+  const parent = $from.parent;
+  const activeMarks = empty ? (storedMarks || $from.marks()) : $from.marks();
+  const markSummary = activeMarks
+    .map((m) =>
+      m.type.name === 'customHighlight'
+        ? `hl:${m.attrs?.color || ''}:${m.attrs?.id || ''}`
+        : m.type.name
+    )
+    .join(',');
+
+  const rangePart = empty ? 'e' : `r:${from}-${to}`;
+  const canUndo = editor.can().undo() ? 1 : 0;
+  const canRedo = editor.can().redo() ? 1 : 0;
+
+  return `${rangePart}|${parent.type.name}:${parent.attrs?.level ?? ''}|${activeAlign}|${ancestorFlags}|${markSummary}|${canUndo}${canRedo}`;
 }
 
 const COLOR_BAR_MAP: Record<HighlightColor, string> = {
@@ -70,22 +106,29 @@ const COLOR_BAR_MAP: Record<HighlightColor, string> = {
 
 export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
   editor,
+  docId,
   isSourceMode = false,
   onToggleSourceMode,
 }) => {
-  // Re-render a toolbar quando a seleção/conteúdo do editor muda.
-  // Necessário porque o componente é memoizado e a referência de `editor` nunca muda.
+  // Re-render a toolbar apenas quando o estado relevante de formatação/seleção mudar.
   const [, forceToolbarUpdate] = useReducer((x: number) => x + 1, 0);
+  const lastToolbarKeyRef = useRef<string>('');
 
   useEffect(() => {
     if (!editor) return;
 
+    lastToolbarKeyRef.current = computeToolbarStateKey(editor);
     let frameId: number | null = null;
     const scheduleUpdate = () => {
       if (frameId !== null) return; // coalesce: no máximo 1 render por frame
       frameId = requestAnimationFrame(() => {
         frameId = null;
-        forceToolbarUpdate();
+        if (editor.isDestroyed) return;
+        const nextKey = computeToolbarStateKey(editor);
+        if (nextKey !== lastToolbarKeyRef.current) {
+          lastToolbarKeyRef.current = nextKey;
+          forceToolbarUpdate();
+        }
       });
     };
 
@@ -261,6 +304,16 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
   const isCustomHighlightActive = editor.isActive('customHighlight');
   const activeHighlightColor = (editor.getAttributes('customHighlight')?.color as HighlightColor) || 'yellow';
 
+  const $toolbarFrom = editor.state.selection.$from;
+  let activeTextAlign = 'justify';
+  for (let d = $toolbarFrom.depth; d > 0; d--) {
+    const align = $toolbarFrom.node(d).attrs?.textAlign;
+    if (align) {
+      activeTextAlign = align;
+      break;
+    }
+  }
+
   const handleSetHighlight = (color: HighlightColor) => {
     const { from, to } = editor.state.selection;
     const attrs = editor.getAttributes('customHighlight');
@@ -319,7 +372,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
       }
       const targetId = allSameExistingId && existingId
         ? existingId
-        : generateNextHighlightId(editor.state.doc);
+        : generateNextHighlightId(editor.state.doc, docId);
       editor.chain().focus().setCustomHighlight({ color, id: targetId }).run();
     }
     setIsHighlightMenuOpen(false);
@@ -724,7 +777,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
             type="button"
             onClick={() => editor.chain().focus().setTextAlign('left').run()}
             className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
-              editor.isActive({ textAlign: 'left' }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+              activeTextAlign === 'left' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
             }`}
             title="Alinhar à esquerda"
           >
@@ -735,7 +788,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
             type="button"
             onClick={() => editor.chain().focus().setTextAlign('center').run()}
             className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
-              editor.isActive({ textAlign: 'center' }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+              activeTextAlign === 'center' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
             }`}
             title="Centralizar"
           >
@@ -746,7 +799,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
             type="button"
             onClick={() => editor.chain().focus().setTextAlign('right').run()}
             className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
-              editor.isActive({ textAlign: 'right' }) ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
+              activeTextAlign === 'right' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400' : ''
             }`}
             title="Alinhar à direita"
           >
@@ -759,10 +812,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
               editor.chain().focus().unsetTextAlign().run();
             }}
             className={`p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${
-              editor.isActive({ textAlign: 'justify' }) ||
-              (!editor.isActive({ textAlign: 'left' }) &&
-                !editor.isActive({ textAlign: 'center' }) &&
-                !editor.isActive({ textAlign: 'right' }))
+              activeTextAlign === 'justify'
                 ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400'
                 : ''
             }`}

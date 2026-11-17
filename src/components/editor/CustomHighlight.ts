@@ -103,8 +103,9 @@ export const CustomHighlight = Mark.create<CustomHighlightOptions>({
       setCustomHighlight:
         (attributes) =>
         ({ commands, state }) => {
+          const id = attributes?.id ? attributes.id : generateNextHighlightId(state.doc);
           const attrs = {
-            id: attributes?.id || generateNextHighlightId(state.doc),
+            id,
             color: attributes?.color || 'yellow',
           };
           return commands.setMark(this.name, attrs);
@@ -112,8 +113,9 @@ export const CustomHighlight = Mark.create<CustomHighlightOptions>({
       toggleCustomHighlight:
         (attributes) =>
         ({ commands, state }) => {
+          const id = attributes?.id ? attributes.id : generateNextHighlightId(state.doc);
           const attrs = {
-            id: attributes?.id || generateNextHighlightId(state.doc),
+            id,
             color: attributes?.color || 'yellow',
           };
           return commands.toggleMark(this.name, attrs);

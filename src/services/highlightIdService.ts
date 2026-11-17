@@ -19,6 +19,7 @@ const DEFAULT_SCOPE_KEY = '__default_doc__';
  * na mesma sessão, protegendo o histórico de Undo/Redo do ProseMirror).
  */
 let highWaterMarkByScope: ReadonlyMap<string, number> = new Map();
+let scannedDocMaxCache = new WeakMap<object, number>();
 
 export interface HighlightScanSummary {
   readonly sequentialMax: number;
@@ -158,18 +159,63 @@ export function scanHighlightsInMarkdown(markdown: string): HighlightScanSummary
 }
 
 /**
+ * Inicializa ou atualiza a marca d'água de IDs sequenciais de um documento já escaneado,
+ * permitindo que os próximos grifos sejam gerados em tempo constante O(1).
+ */
+export function primeHighlightIdScope(
+  scopeKey: string | null | undefined,
+  maxSequentialValue: number
+): void {
+  const resolvedScope = scopeKey && scopeKey.trim() ? scopeKey.trim() : DEFAULT_SCOPE_KEY;
+  const safeMax =
+    Number.isFinite(maxSequentialValue) && maxSequentialValue >= 0
+      ? Math.floor(maxSequentialValue)
+      : 0;
+  const previous = highWaterMarkByScope.get(resolvedScope) ?? 0;
+
+  if (safeMax > previous || !highWaterMarkByScope.has(resolvedScope)) {
+    highWaterMarkByScope = new Map([
+      ...highWaterMarkByScope,
+      [resolvedScope, Math.max(previous, safeMax)],
+    ]);
+  }
+}
+
+/**
  * Gera o próximo ID sequencial garantidamente único e maior que todos os existentes no documento.
  */
 export function generateNextHighlightId(docOrMarkdown?: any, scopeKey?: string | null): string {
   const resolvedScope = scopeKey && scopeKey.trim() ? scopeKey.trim() : DEFAULT_SCOPE_KEY;
+  const previousHighWater = highWaterMarkByScope.get(resolvedScope);
 
-  const scan =
-    typeof docOrMarkdown === 'string'
-      ? scanHighlightsInMarkdown(docOrMarkdown)
-      : scanHighlightsInProseMirrorDoc(docOrMarkdown);
+  // Caminho rápido O(1): quando o escopo já foi indexado na abertura/contagem do documento
+  // e trata-se de um documento ProseMirror real (possui nodeSize numérico), evita re-varrer a árvore inteira.
+  if (
+    scopeKey &&
+    previousHighWater !== undefined &&
+    docOrMarkdown &&
+    typeof docOrMarkdown === 'object' &&
+    typeof docOrMarkdown.nodeSize === 'number'
+  ) {
+    const nextCounter = previousHighWater + 1;
+    highWaterMarkByScope = new Map([...highWaterMarkByScope, [resolvedScope, nextCounter]]);
+    return formatSequentialHighlightId(nextCounter);
+  }
 
-  const previousHighWater = highWaterMarkByScope.get(resolvedScope) ?? 0;
-  const nextCounter = Math.max(scan.sequentialMax, previousHighWater) + 1;
+  let docMax = 0;
+  if (typeof docOrMarkdown === 'string') {
+    docMax = scanHighlightsInMarkdown(docOrMarkdown).sequentialMax;
+  } else if (docOrMarkdown && typeof docOrMarkdown === 'object') {
+    const cached = scannedDocMaxCache.get(docOrMarkdown);
+    if (cached !== undefined) {
+      docMax = cached;
+    } else {
+      docMax = scanHighlightsInProseMirrorDoc(docOrMarkdown).sequentialMax;
+      scannedDocMaxCache.set(docOrMarkdown, docMax);
+    }
+  }
+
+  const nextCounter = Math.max(docMax, previousHighWater ?? 0) + 1;
 
   highWaterMarkByScope = new Map([...highWaterMarkByScope, [resolvedScope, nextCounter]]);
   return formatSequentialHighlightId(nextCounter);
@@ -355,4 +401,5 @@ export function requestScrollToLatestHighlight(): void {
  */
 export function resetHighlightIdMemory(): void {
   highWaterMarkByScope = new Map();
+  scannedDocMaxCache = new WeakMap<object, number>();
 }

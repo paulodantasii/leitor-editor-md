@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { saveLocalDocument, flushPendingLocalDocumentSave } from './storage';
+import { saveRecentDocument } from './recentDocumentsService';
 import { DocumentState } from '../types';
 
 vi.mock('./recentDocumentsService', () => ({
@@ -80,5 +81,24 @@ describe('storage (coalesced saving)', () => {
     expect(saved).not.toBeNull();
     const parsed = JSON.parse(saved!);
     expect(parsed.content).toBe('Pendente no timer');
+  });
+
+  it('grava stub storedInDb no localStorage para arquivos > 400KB e evita sobrescrever IndexedDB com stub vazio', () => {
+    const saveRecentMock = vi.mocked(saveRecentDocument);
+    saveRecentMock.mockClear();
+
+    const giantContent = 'A'.repeat(400_500);
+    saveLocalDocument({ ...sampleDoc, content: giantContent }, true);
+
+    const saved = JSON.parse(localStorage.getItem('leitor_md_document')!);
+    expect(saved.storedInDb).toBe(true);
+    expect(saved.content).toBe('');
+    expect(saveRecentMock).toHaveBeenCalledTimes(1);
+    expect(saveRecentMock.mock.calls[0][0].content).toBe(giantContent);
+
+    // Se ocorrer save com o stub não hidratado, NÃO deve sobrescrever o IndexedDB
+    saveRecentMock.mockClear();
+    saveLocalDocument({ ...sampleDoc, content: '', storedInDb: true }, true);
+    expect(saveRecentMock).not.toHaveBeenCalled();
   });
 });

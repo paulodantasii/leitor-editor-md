@@ -38,6 +38,7 @@ export interface DocumentState {
   draftRevision: number;
   sourceRevision: number;
   docId?: string;
+  storedInDb?: boolean;
   cloudLastModified?: string | null;
   cloudETag?: string | null;
   localLastModified?: number | null;

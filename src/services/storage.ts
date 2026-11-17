@@ -45,26 +45,41 @@ let pendingSaveDoc: DocumentState | null = null;
 let saveDebounceTimer: NodeJS.Timeout | null = null;
 
 function performSaveDoc(docState: DocumentState): void {
+  // Evita sobrescrever o conteúdo completo salvo no IndexedDB com um stub vazio
+  // caso ocorra um salvamento antes da hidratação assíncrona concluir.
+  if (docState.storedInDb && (!docState.content || docState.content.length === 0)) {
+    try {
+      localStorage.setItem(DOC_KEY, JSON.stringify(docState));
+    } catch (err) {
+      console.warn('Falha ao salvar metadados no localStorage:', err);
+    }
+    return;
+  }
+
   try {
     // Para documentos muito grandes (> 400KB), o payload pode travar a thread síncrona
     // do localStorage ou estourar a cota de 5MB. Salvamos o snapshot com storedInDb: true
     // no localStorage, enquanto o IndexedDB (assíncrono) retém o conteúdo integral.
     if (docState.content && docState.content.length > 400000) {
-      const lightweight = {
+      const lightweight: DocumentState = {
         ...docState,
         content: '',
         storedInDb: true,
       };
       localStorage.setItem(DOC_KEY, JSON.stringify(lightweight));
     } else {
-      localStorage.setItem(DOC_KEY, JSON.stringify(docState));
+      const fullLocal: DocumentState = {
+        ...docState,
+        storedInDb: false,
+      };
+      localStorage.setItem(DOC_KEY, JSON.stringify(fullLocal));
     }
   } catch (err) {
     console.warn('Falha ao salvar backup síncrono no localStorage (armazenamento prioritário permanece no IndexedDB):', err);
   }
 
   // Maintain in IndexedDB recent documents collection
-  saveRecentDocument(docState).catch((err) => {
+  saveRecentDocument({ ...docState, storedInDb: false }).catch((err) => {
     console.warn('Falha ao salvar documento no histórico do IndexedDB:', err);
   });
 }

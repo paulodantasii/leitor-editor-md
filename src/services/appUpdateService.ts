@@ -1,5 +1,5 @@
 import { flushPendingEditorContent } from './editorContentBridge';
-import { flushPendingLocalDocumentSave } from './storage';
+import { flushPendingLocalDocumentSave, loadLocalDocument, loadOpenTabsSession } from './storage';
 
 const RELOAD_GUARD_KEY = 'leitor_md_reloaded_build';
 
@@ -109,8 +109,8 @@ export async function checkAndApplyAppUpdate(): Promise<boolean> {
 }
 
 /**
- * Inicializa o Service Worker com bypass de cache HTTP (updateViaCache: 'none'),
- * escuta trocas de controlador (controllerchange) e verifica atualizações ao focar na aba.
+ * Inicializa o Service Worker com bypass de cache HTTP (updateViaCache: 'none')
+ * e executa uma verificação silenciosa única no boot (sem recarregar durante a leitura/edição).
  */
 export function initAutoUpdateListeners(): () => void {
   // Limpa o parâmetro _v da barra de endereços após um reload de atualização
@@ -128,66 +128,25 @@ export function initAutoUpdateListeners(): () => void {
     return () => {};
   }
 
-  let isRefreshing = false;
-
-  const handleControllerChange = () => {
-    if (isRefreshing) return;
-    isRefreshing = true;
-    flushUserWorkBeforeReload();
-    window.location.reload();
-  };
-
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
-
     const swUrl = `${import.meta.env.BASE_URL}sw.js`;
     navigator.serviceWorker
       .register(swUrl, { updateViaCache: 'none' })
       .then((reg) => {
-        if (reg.waiting) {
-          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
-
-        reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          if (!newWorker) return;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              newWorker.postMessage({ type: 'SKIP_WAITING' });
-            }
-          });
-        });
-
-        // Verifica atualizações do SW periodicamente quando visível
         reg.update().catch(() => {});
       })
       .catch((err) => console.warn('Falha no registro do Service Worker:', err));
   }
 
-  // Checa imediatamente no boot se o bundle em memória está defasado em relação ao version.json
-  checkAndApplyAppUpdate();
-
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      checkAndApplyAppUpdate();
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistration().then((reg) => reg?.update()).catch(() => {});
-      }
-    }
-  };
-
-  const handleOnline = () => {
+  // Verifica atualização silenciosamente apenas no boot inicial e se não houver edições pendentes
+  const localDoc = loadLocalDocument();
+  const tabsSession = loadOpenTabsSession();
+  const hasDirtyWork =
+    Boolean(localDoc?.isDirty) ||
+    Boolean(tabsSession?.tabs?.some((t) => t.isDirty));
+  if (!hasDirtyWork) {
     checkAndApplyAppUpdate();
-  };
+  }
 
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-  window.addEventListener('online', handleOnline);
-
-  return () => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
-    }
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
-    window.removeEventListener('online', handleOnline);
-  };
+  return () => {};
 }

@@ -31,20 +31,29 @@ import {
 import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
 import {
   generateNextHighlightId,
+  parseSequentialHighlightId,
+  primeHighlightIdScope,
   registerScrollToLatestHighlightHandler,
   scrollToLatestHighlightInContainer,
   scanHighlightsInMarkdown,
 } from '../../services/highlightIdService';
 import {
+  TocHeadingItem,
   extractHeadingsFromProseMirrorDoc,
   extractHeadingsFromMarkdown,
   findActiveHeadingIndexByTops,
   getStickyTopOffsetPx,
+  getTocSnapshot,
+  setTocActiveIndex,
   updateTocState,
   resetTocState,
   registerNavigateToHeadingHandler,
   pulseHeadingElement,
 } from '../../services/tocService';
+import {
+  serializeDocIncrementally,
+  warmUpIncrementalMarkdownCache,
+} from '../../services/incrementalMarkdownSerializer';
 import {
   ScrollSyncAnchor,
   captureVisualScrollAnchor,
@@ -84,6 +93,78 @@ function countHighlightsInRawMarkdown(markdown: string): number {
   return uniqueIds.size + unassignedCount;
 }
 
+/**
+ * Verifica em tempo O(steps) se uma transação ProseMirror tocou em algum título (heading)
+ * ou alterou a estrutura de blocos do documento, evitando re-extrair o sumário a cada tecla/grifo.
+ */
+function transactionTouchesHeading(tr: any): boolean {
+  if (!tr || !tr.docChanged) return false;
+  if (tr.before && tr.doc && tr.before.childCount !== tr.doc.childCount) {
+    return true;
+  }
+
+  const steps = Array.isArray(tr.steps) ? tr.steps : [];
+  if (steps.length === 0) return true;
+
+  let hasStructuralOrTextStep = false;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if ('slice' in step || 'structure' in step || 'attr' in step) {
+      hasStructuralOrTextStep = true;
+      break;
+    }
+  }
+  if (!hasStructuralOrTextStep) return false;
+
+  let touchedHeading = false;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const map = typeof step?.getMap === 'function' ? step.getMap() : null;
+    if (!map || typeof map.forEach !== 'function') {
+      return true;
+    }
+
+    let hadMappedRange = false;
+    map.forEach((oldStart: number, oldEnd: number, newStart: number, newEnd: number) => {
+      hadMappedRange = true;
+      if (touchedHeading) return;
+      if (tr.before && typeof tr.before.nodesBetween === 'function') {
+        const safeOldStart = Math.max(0, Math.min(oldStart, tr.before.content.size));
+        const safeOldEnd = Math.max(safeOldStart, Math.min(oldEnd, tr.before.content.size));
+        tr.before.nodesBetween(safeOldStart, safeOldEnd, (node: any) => {
+          if (node?.type?.name === 'heading') {
+            touchedHeading = true;
+            return false;
+          }
+          return true;
+        });
+      }
+      if (!touchedHeading && tr.doc && typeof tr.doc.nodesBetween === 'function') {
+        const safeNewStart = Math.max(0, Math.min(newStart, tr.doc.content.size));
+        const safeNewEnd = Math.max(safeNewStart, Math.min(newEnd, tr.doc.content.size));
+        tr.doc.nodesBetween(safeNewStart, safeNewEnd, (node: any) => {
+          if (node?.type?.name === 'heading') {
+            touchedHeading = true;
+            return false;
+          }
+          return true;
+        });
+      }
+    });
+
+    if (!hadMappedRange && typeof step?.pos === 'number') {
+      const nodeAtPos = tr.doc?.nodeAt?.(step.pos);
+      if (nodeAtPos?.type?.name === 'heading') {
+        return true;
+      }
+    }
+
+    if (touchedHeading) return true;
+  }
+
+  return touchedHeading;
+}
+
 export const TiptapEditor: React.FC = () => {
   // Fine-grained selectors: avoids re-rendering TiptapEditor on every content change / sync update
   const docId = useAppStore((state) => state.document?.docId);
@@ -105,6 +186,10 @@ export const TiptapEditor: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isMouseDownRef = useRef(false);
+  const isTouchSelectingRef = useRef(false);
+  const lastClickedMarkPosRef = useRef<number | null>(null);
+  const cachedDomHeadingsRef = useRef<HTMLElement[]>([]);
+  const warmUpCancelRef = useRef<(() => void) | null>(null);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastEmittedMarkdownRef = useRef<string | null>(null);
   const currentLoadedDocIdRef = useRef<string | null | undefined>(null);
@@ -128,20 +213,31 @@ export const TiptapEditor: React.FC = () => {
 
   const setPopoverOpen = useCallback((open: boolean) => {
     isPopoverOpenRef.current = open;
+    if (!open) {
+      lastClickedMarkPosRef.current = null;
+    }
     setIsPopoverOpen(open);
   }, []);
 
-  // Track global mouse down state for PC dragging
+  // Track global mouse/touch active state to avoid premature auto-highlight while dragging selection
   useEffect(() => {
     const handleDown = () => (isMouseDownRef.current = true);
     const handleUp = () => (isMouseDownRef.current = false);
-    
+    const handleTouchStartGlobal = () => (isTouchSelectingRef.current = true);
+    const handleTouchEndGlobal = () => (isTouchSelectingRef.current = false);
+
     window.addEventListener('mousedown', handleDown);
     window.addEventListener('mouseup', handleUp);
-    
+    window.addEventListener('touchstart', handleTouchStartGlobal, { passive: true });
+    window.addEventListener('touchend', handleTouchEndGlobal, { passive: true });
+    window.addEventListener('touchcancel', handleTouchEndGlobal, { passive: true });
+
     return () => {
       window.removeEventListener('mousedown', handleDown);
       window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('touchstart', handleTouchStartGlobal);
+      window.removeEventListener('touchend', handleTouchEndGlobal);
+      window.removeEventListener('touchcancel', handleTouchEndGlobal);
     };
   }, []);
 
@@ -159,14 +255,20 @@ export const TiptapEditor: React.FC = () => {
         if (!ed || ed.isDestroyed) return;
         const uniqueIds = new Set<string>();
         let unassignedCount = 0;
+        let maxSeq = 0;
 
         ed.state.doc.descendants((node) => {
           if (!node.isText) return;
           for (let i = 0; i < node.marks.length; i++) {
             const mark = node.marks[i];
             if (mark.type.name === 'customHighlight') {
-              if (mark.attrs.id) {
-                uniqueIds.add(mark.attrs.id);
+              const rawId = typeof mark.attrs.id === 'string' ? mark.attrs.id.trim() : '';
+              if (rawId) {
+                uniqueIds.add(rawId);
+                const seq = parseSequentialHighlightId(rawId);
+                if (seq !== null && seq > maxSeq) {
+                  maxSeq = seq;
+                }
               } else {
                 unassignedCount++;
               }
@@ -174,6 +276,7 @@ export const TiptapEditor: React.FC = () => {
           }
         });
 
+        primeHighlightIdScope(useAppStore.getState().document?.docId, maxSeq);
         setHighlightCount(uniqueIds.size + unassignedCount);
       };
 
@@ -270,21 +373,23 @@ export const TiptapEditor: React.FC = () => {
     onUpdate: ({ transaction }) => {
       if (!transaction.docChanged) return;
       scheduleDebouncedContentRef.current();
-      scheduleDebouncedTocRefreshRef.current(editorRef.current);
+      if (transactionTouchesHeading(transaction)) {
+        scheduleDebouncedTocRefreshRef.current(editorRef.current);
+      }
     },
     onSelectionUpdate: ({ editor: currentEditor }) => {
       if (!currentEditor) return;
 
       // Se houver edições pendentes no buffer, qualquer movimento de cursor ou seleção
-      // indica que o usuário continua ativo no documento — adia a serialização pesada.
+      // indica que o usuário continua ativo no documento — adia a serialização.
       postponePendingContentFlushRef.current();
 
       const { from, to } = currentEditor.state.selection;
 
       // User selected a text range in Highlight Mode -> APPLY HIGHLIGHT
       if (isHighlightMode && !currentEditor.isDestroyed && from !== to) {
-        // Prevent instant highlight while dragging on PC
-        if (isMouseDownRef.current) return;
+        // Prevent instant highlight while dragging on PC or adjusting selection on touch devices
+        if (isMouseDownRef.current || isTouchSelectingRef.current) return;
 
         if (highlightTimeoutRef.current) {
           clearTimeout(highlightTimeoutRef.current);
@@ -351,7 +456,7 @@ export const TiptapEditor: React.FC = () => {
     const currentEditor = editorRef.current;
     if (!currentEditor || currentEditor.isDestroyed) return;
 
-    const rawMarkdown = currentEditor.storage.markdown.getMarkdown();
+    const rawMarkdown = serializeDocIncrementally(currentEditor);
     lastEmittedMarkdownRef.current = rawMarkdown;
     markBridgeClean();
     updateDocumentContent(rawMarkdown);
@@ -361,11 +466,10 @@ export const TiptapEditor: React.FC = () => {
   const armIdleFlushTimer = useCallback(() => {
     clearPendingContentTimers();
 
-    // Debounce adaptativo ao tamanho do documento:
-    // Em arquivos gigantes (> 200KB, como o CPC), aguarda 5s de inatividade completa
-    // (sem digitar, apagar, formatar ou mover o cursor) para nunca travar a UI.
+    // Com serialização incremental O(1) por bloco, o flush leva < 2ms;
+    // usamos debounce curto sem travar a interface.
     const docSize = (lastEmittedMarkdownRef.current || '').length;
-    const delay = docSize > 200000 ? 5000 : docSize > 80000 ? 3000 : 1000;
+    const delay = docSize > 200000 ? 1500 : 1000;
 
     markdownDebounceTimerRef.current = setTimeout(() => {
       markdownDebounceTimerRef.current = null;
@@ -413,7 +517,7 @@ export const TiptapEditor: React.FC = () => {
   postponePendingContentFlushRef.current = postponePendingContentFlush;
 
   const computeActiveHeadingInDom = useCallback(
-    (headingsCount: number): number => {
+    (headingsCount: number, precomputedHeadings?: ReadonlyArray<TocHeadingItem>): number => {
       if (headingsCount === 0) return -1;
 
       const thresholdY = getStickyTopOffsetPx() + 8;
@@ -423,7 +527,7 @@ export const TiptapEditor: React.FC = () => {
         const textarea = rawTextareaRef.current;
         const rect = textarea.getBoundingClientRect();
         const md = rawContentRef.current;
-        const mdHeadings = extractHeadingsFromMarkdown(md);
+        const mdHeadings = precomputedHeadings ?? getTocSnapshot().headings;
         if (mdHeadings.length === 0) return -1;
 
         const charOffsets = mdHeadings.map((h) => h.charOffset ?? 0);
@@ -432,37 +536,82 @@ export const TiptapEditor: React.FC = () => {
         return findActiveHeadingIndexByTops(estimatedTops, thresholdY);
       }
 
-      const container = containerRef.current;
-      if (!container) return 0;
+      let headingEls = cachedDomHeadingsRef.current;
+      if (headingEls.length === 0 || !headingEls[0].isConnected) {
+        const container = containerRef.current;
+        if (!container) return 0;
 
-      const domHeadings = container.querySelectorAll(
-        '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'
-      );
-      if (domHeadings.length === 0) return 0;
+        const domHeadings = container.querySelectorAll(
+          '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'
+        );
+        if (domHeadings.length === 0) return 0;
 
-      const tops: number[] = [];
-      for (let i = 0; i < domHeadings.length; i++) {
-        const el = domHeadings[i] as HTMLElement;
-        // Ignora headings vazios para manter paridade 1:1 com extractHeadingsFromProseMirrorDoc
-        if ((el.textContent || '').trim().length > 0) {
-          tops.push(el.getBoundingClientRect().top);
+        const validEls: HTMLElement[] = [];
+        for (let i = 0; i < domHeadings.length; i++) {
+          const el = domHeadings[i] as HTMLElement;
+          if ((el.textContent || '').trim().length > 0) {
+            validEls.push(el);
+          }
+        }
+        cachedDomHeadingsRef.current = validEls;
+        headingEls = validEls;
+      }
+
+      if (headingEls.length === 0) return 0;
+
+      // Busca binária O(log H): lê getBoundingClientRect().top apenas dos nós pivô
+      let low = 0;
+      let high = headingEls.length - 1;
+      let activeIdx = -1;
+
+      while (low <= high) {
+        const mid = (low + high) >>> 1;
+        const top = headingEls[mid].getBoundingClientRect().top;
+        if (top <= thresholdY) {
+          activeIdx = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
         }
       }
 
-      return findActiveHeadingIndexByTops(tops, thresholdY);
+      return activeIdx === -1 ? 0 : activeIdx;
     },
     []
   );
 
   const refreshTocStructure = useCallback(
     (ed: Editor | null) => {
-      const headings = isSourceModeRef.current
-        ? extractHeadingsFromMarkdown(rawContentRef.current)
-        : ed && !ed.isDestroyed
-        ? extractHeadingsFromProseMirrorDoc(ed.state.doc)
-        : [];
+      if (isSourceModeRef.current) {
+        cachedDomHeadingsRef.current = [];
+        const headings = extractHeadingsFromMarkdown(rawContentRef.current);
+        const activeIdx = computeActiveHeadingInDom(headings.length, headings);
+        updateTocState(headings, activeIdx);
+        return;
+      }
 
-      const activeIdx = computeActiveHeadingInDom(headings.length);
+      const headings =
+        ed && !ed.isDestroyed ? extractHeadingsFromProseMirrorDoc(ed.state.doc) : [];
+
+      const container = containerRef.current;
+      if (container) {
+        const domHeadings = container.querySelectorAll(
+          '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'
+        );
+        const validEls: HTMLElement[] = [];
+        for (let i = 0; i < domHeadings.length; i++) {
+          const el = domHeadings[i] as HTMLElement;
+          // Ignora headings vazios para manter paridade 1:1 com extractHeadingsFromProseMirrorDoc
+          if ((el.textContent || '').trim().length > 0) {
+            validEls.push(el);
+          }
+        }
+        cachedDomHeadingsRef.current = validEls;
+      } else {
+        cachedDomHeadingsRef.current = [];
+      }
+
+      const activeIdx = computeActiveHeadingInDom(headings.length, headings);
       updateTocState(headings, activeIdx);
     },
     [computeActiveHeadingInDom]
@@ -518,6 +667,10 @@ export const TiptapEditor: React.FC = () => {
         cancelAnimationFrame(tocScrollRafRef.current);
         tocScrollRafRef.current = null;
       }
+      if (warmUpCancelRef.current) {
+        warmUpCancelRef.current();
+        warmUpCancelRef.current = null;
+      }
       resetTocState();
     };
   }, [flushContent, clearPendingContentTimers]);
@@ -540,20 +693,24 @@ export const TiptapEditor: React.FC = () => {
     setRawContent(nextContent);
 
     if (!nextContent) {
+      warmUpCancelRef.current?.();
+      warmUpCancelRef.current = null;
       editor.commands.clearContent(false);
       updateHighlightCount(editor);
       refreshTocStructure(editor);
       return;
     }
 
+    warmUpCancelRef.current?.();
     editor.commands.setContent(nextContent, false);
+    warmUpCancelRef.current = warmUpIncrementalMarkdownCache(editor);
     updateHighlightCount(editor);
     requestAnimationFrame(() => {
       refreshTocStructure(editor);
     });
   }, [docId, editor, updateHighlightCount, refreshTocStructure]);
 
-  // Escuta atualizações externas de conteúdo na mesma aba (ex.: resolução de conflito ou sync silencioso do OneDrive)
+  // Escuta atualizações externas de conteúdo na mesma aba (ex.: resolução de conflito, hidratação do IndexedDB ou sync silencioso do OneDrive)
   useEffect(() => {
     const unsubscribe = useAppStore.subscribe((state, prevState) => {
       const nextDoc = state.document;
@@ -570,7 +727,9 @@ export const TiptapEditor: React.FC = () => {
 
       const currentEditor = editorRef.current;
       if (currentEditor && !currentEditor.isDestroyed) {
+        warmUpCancelRef.current?.();
         currentEditor.commands.setContent(nextDoc.content, false);
+        warmUpCancelRef.current = warmUpIncrementalMarkdownCache(currentEditor);
         updateHighlightCount(currentEditor);
         requestAnimationFrame(() => {
           refreshTocStructure(currentEditor);
@@ -686,7 +845,9 @@ export const TiptapEditor: React.FC = () => {
       if (editor && !editor.isDestroyed && isRawDirtyRef.current) {
         const latestRaw = rawContentRef.current;
         lastEmittedMarkdownRef.current = latestRaw;
+        warmUpCancelRef.current?.();
         editor.commands.setContent(latestRaw, false);
+        warmUpCancelRef.current = warmUpIncrementalMarkdownCache(editor);
         updateHighlightCount(editor);
         isRawDirtyRef.current = false;
       }
@@ -833,18 +994,10 @@ export const TiptapEditor: React.FC = () => {
       if (tocScrollRafRef.current !== null) return;
       tocScrollRafRef.current = requestAnimationFrame(() => {
         tocScrollRafRef.current = null;
-        if (!isTransitioningSourceModeRef.current) {
-          lastScrollSyncAnchorRef.current = captureCurrentScrollAnchorSnapshot();
-        }
-        const ed = editorRef.current;
-        const headings = isSourceModeRef.current
-          ? extractHeadingsFromMarkdown(rawContentRef.current)
-          : ed && !ed.isDestroyed
-          ? extractHeadingsFromProseMirrorDoc(ed.state.doc)
-          : [];
-        if (headings.length === 0) return;
-        const activeIdx = computeActiveHeadingInDom(headings.length);
-        updateTocState(headings, activeIdx);
+        const currentHeadings = getTocSnapshot().headings;
+        if (currentHeadings.length === 0) return;
+        const activeIdx = computeActiveHeadingInDom(currentHeadings.length, currentHeadings);
+        setTocActiveIndex(activeIdx);
       });
     };
 
@@ -858,7 +1011,7 @@ export const TiptapEditor: React.FC = () => {
         tocScrollRafRef.current = null;
       }
     };
-  }, [computeActiveHeadingInDom, captureCurrentScrollAnchorSnapshot]);
+  }, [computeActiveHeadingInDom]);
 
   // Registra o comando de navegação rápida para um título ao clicar no Sumário (TOC Popover)
   useEffect(() => {
@@ -1035,6 +1188,7 @@ export const TiptapEditor: React.FC = () => {
               (markEl.getAttribute('data-color') as HighlightColor) ||
               (editor.getAttributes('customHighlight').color as HighlightColor) ||
               'yellow';
+            lastClickedMarkPosRef.current = pos;
             setActiveHighlightColor(clickedColor);
             setPopoverOpen(true);
             editor.commands.setTextSelection(pos + 1);
@@ -1109,6 +1263,7 @@ export const TiptapEditor: React.FC = () => {
               (markEl.getAttribute('data-color') as HighlightColor) ||
               (editor.getAttributes('customHighlight').color as HighlightColor) ||
               'yellow';
+            lastClickedMarkPosRef.current = pos;
             setActiveHighlightColor(clickedColor);
             setPopoverOpen(true);
             editor.commands.setTextSelection(pos + 1);
@@ -1146,6 +1301,7 @@ export const TiptapEditor: React.FC = () => {
     if (!editor) return;
 
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    const centerPos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
     setActiveHighlightColor(color);
     setPopoverOpen(false);
 
@@ -1156,12 +1312,13 @@ export const TiptapEditor: React.FC = () => {
     if (existingId) {
       const { tr } = editor.state;
       let modified = false;
+      let hitNarrowEdge = false;
 
-      // Localized search range (10000 characters) around current selection
-      const searchFrom = Math.max(0, from - 5000);
-      const searchTo = Math.min(tr.doc.content.size, to + 5000);
+      // Janela curta O(1) ao redor do <mark> clicado antes de expandir
+      const narrowFrom = Math.max(0, centerPos - 1200);
+      const narrowTo = Math.min(tr.doc.content.size, Math.max(to, centerPos) + 1200);
 
-      tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+      tr.doc.nodesBetween(narrowFrom, narrowTo, (node, pos) => {
         if (!node.isText) return;
         const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
         if (mark) {
@@ -1169,8 +1326,28 @@ export const TiptapEditor: React.FC = () => {
           const newMark = mark.type.create({ ...mark.attrs, color });
           tr.addMark(pos, pos + node.nodeSize, newMark);
           modified = true;
+          if (pos <= narrowFrom || pos + node.nodeSize >= narrowTo) {
+            hitNarrowEdge = true;
+          }
         }
       });
+
+      // Fallback para janela de 10000 chars caso o grifo ultrapasse a janela curta
+      if (!modified || hitNarrowEdge) {
+        const searchFrom = Math.max(0, from - 5000);
+        const searchTo = Math.min(tr.doc.content.size, to + 5000);
+
+        tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+          if (!node.isText) return;
+          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
+          if (mark && mark.attrs.color !== color) {
+            tr.removeMark(pos, pos + node.nodeSize, mark.type);
+            const newMark = mark.type.create({ ...mark.attrs, color });
+            tr.addMark(pos, pos + node.nodeSize, newMark);
+            modified = true;
+          }
+        });
+      }
 
       // Defensive fallback if mark spanned beyond 5000 chars
       if (!modified) {
@@ -1209,6 +1386,7 @@ export const TiptapEditor: React.FC = () => {
     if (!editor) return;
 
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    const centerPos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
     setPopoverOpen(false);
 
     const attrs = editor.getAttributes('customHighlight');
@@ -1218,18 +1396,36 @@ export const TiptapEditor: React.FC = () => {
     if (existingId) {
       const { tr } = editor.state;
       let modified = false;
+      let hitNarrowEdge = false;
 
-      const searchFrom = Math.max(0, from - 5000);
-      const searchTo = Math.min(tr.doc.content.size, to + 5000);
+      const narrowFrom = Math.max(0, centerPos - 1200);
+      const narrowTo = Math.min(tr.doc.content.size, Math.max(to, centerPos) + 1200);
 
-      tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+      tr.doc.nodesBetween(narrowFrom, narrowTo, (node, pos) => {
         if (!node.isText) return;
         const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
         if (mark) {
           tr.removeMark(pos, pos + node.nodeSize, mark.type);
           modified = true;
+          if (pos <= narrowFrom || pos + node.nodeSize >= narrowTo) {
+            hitNarrowEdge = true;
+          }
         }
       });
+
+      if (!modified || hitNarrowEdge) {
+        const searchFrom = Math.max(0, from - 5000);
+        const searchTo = Math.min(tr.doc.content.size, to + 5000);
+
+        tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+          if (!node.isText) return;
+          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
+          if (mark) {
+            tr.removeMark(pos, pos + node.nodeSize, mark.type);
+            modified = true;
+          }
+        });
+      }
 
       if (!modified) {
         tr.doc.descendants((node, pos) => {
@@ -1307,6 +1503,7 @@ export const TiptapEditor: React.FC = () => {
       {isEditable && (
         <EditorToolbar
           editor={editor}
+          docId={docId}
           isSourceMode={isSourceMode}
           onToggleSourceMode={handleToggleSourceModeWithScrollSync}
         />
@@ -1319,7 +1516,7 @@ export const TiptapEditor: React.FC = () => {
         } ${isHighlightMode ? 'highlight-mode-active' : ''} ${isEditable ? 'editor-mode-active' : ''} print:max-w-none print:w-full print:p-0 print:m-0`}
         style={{ fontSize: `${preferences.fontSize}px` }}
       >
-        {editor && (
+        {editor && !isEditable && (
           <BubbleMenu 
             editor={editor} 
             tippyOptions={{ duration: 100 }}
