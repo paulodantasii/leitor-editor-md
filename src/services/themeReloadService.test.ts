@@ -164,14 +164,15 @@ describe('restoreStateAfterThemeReload', () => {
       ...overrides,
     });
 
-  it('restaura scroll e modos na mesma aba/doc e remove a chave', async () => {
+  it('restaura scroll e modos na mesma aba/doc, remove a chave e marca wasThemeReloadRestoredOnBoot como true', async () => {
     const storage = createStorage({ [KEY]: snapshot() });
     stubBrowser({ storage });
     storeState.activeTabId = 'tab-1';
     storeState.document = { docId: 'doc-1' };
 
-    const { restoreStateAfterThemeReload } = await loadService();
+    const { restoreStateAfterThemeReload, wasThemeReloadRestoredOnBoot } = await loadService();
     expect(restoreStateAfterThemeReload()).toBe(true);
+    expect(wasThemeReloadRestoredOnBoot()).toBe(true);
     expect(saveScrollMock).toHaveBeenCalledWith('tab-1', 300, 'doc-1');
     expect(setStateMock).toHaveBeenCalledWith({
       isEditable: true,
@@ -181,16 +182,62 @@ describe('restoreStateAfterThemeReload', () => {
     expect(storage.getItem(KEY)).toBeNull();
   });
 
-  it('aba ou doc diferentes: retorna false e não altera o estado', async () => {
+  it('aba ou doc diferentes: retorna false, não altera o estado e mantém wasThemeReloadRestoredOnBoot como false', async () => {
     const storage = createStorage({ [KEY]: snapshot({ tabId: 'outra' }) });
     stubBrowser({ storage });
     storeState.activeTabId = 'tab-1';
     storeState.document = { docId: 'doc-1' };
 
-    const { restoreStateAfterThemeReload } = await loadService();
+    const { restoreStateAfterThemeReload, wasThemeReloadRestoredOnBoot } = await loadService();
     expect(restoreStateAfterThemeReload()).toBe(false);
+    expect(wasThemeReloadRestoredOnBoot()).toBe(false);
     expect(setStateMock).not.toHaveBeenCalled();
     expect(saveScrollMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('hasValidThemeReloadSnapshot', () => {
+  const now = 2_000_000;
+
+  it('retorna false quando não há snapshot no sessionStorage', async () => {
+    stubBrowser();
+    const { hasValidThemeReloadSnapshot } = await loadService();
+    expect(hasValidThemeReloadSnapshot(now)).toBe(false);
+  });
+
+  it('retorna true para snapshot válido sem removê-lo do sessionStorage', async () => {
+    const raw = JSON.stringify({
+      tabId: 'tab-1',
+      docId: 'doc-1',
+      scrollY: 42,
+      isEditable: false,
+      isHighlightMode: false,
+      isSourceMode: false,
+      savedAt: now - 1000,
+    });
+    const storage = createStorage({ [KEY]: raw });
+    stubBrowser({ storage });
+
+    const { hasValidThemeReloadSnapshot } = await loadService();
+    expect(hasValidThemeReloadSnapshot(now)).toBe(true);
+    expect(storage.getItem(KEY)).toBe(raw);
+  });
+
+  it('retorna false para snapshot expirado', async () => {
+    const raw = JSON.stringify({
+      tabId: 'tab-1',
+      docId: 'doc-1',
+      scrollY: 0,
+      isEditable: false,
+      isHighlightMode: false,
+      isSourceMode: false,
+      savedAt: now - 20_000,
+    });
+    const storage = createStorage({ [KEY]: raw });
+    stubBrowser({ storage });
+
+    const { hasValidThemeReloadSnapshot } = await loadService();
+    expect(hasValidThemeReloadSnapshot(now)).toBe(false);
   });
 });
 

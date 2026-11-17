@@ -4,10 +4,14 @@ import { saveCoordinator } from '../services/saveCoordinator';
 
 describe('Fase 4: Fechar e Gestão de DocumentState | null', () => {
   const mockLocalStorage: Record<string, string> = {};
+  const mockSessionStorage: Record<string, string> = {};
 
   beforeEach(() => {
     for (const key of Object.keys(mockLocalStorage)) {
       delete mockLocalStorage[key];
+    }
+    for (const key of Object.keys(mockSessionStorage)) {
+      delete mockSessionStorage[key];
     }
 
     vi.stubGlobal('localStorage', {
@@ -24,9 +28,24 @@ describe('Fase 4: Fechar e Gestão de DocumentState | null', () => {
         }
       },
     });
+
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => mockSessionStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        mockSessionStorage[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete mockSessionStorage[k];
+      },
+      clear: () => {
+        for (const key of Object.keys(mockSessionStorage)) {
+          delete mockSessionStorage[key];
+        }
+      },
+    });
   });
 
-  it('permite fechar o documento ativo limpando o estado para null e removendo do localStorage', () => {
+  it('permite fechar o documento ativo limpando o estado para null e removendo do sessionStorage e localStorage', () => {
     // Abre um documento
     useAppStore.getState().createNewDocument();
     expect(useAppStore.getState().document).not.toBeNull();
@@ -38,6 +57,7 @@ describe('Fase 4: Fechar e Gestão de DocumentState | null', () => {
     expect(useAppStore.getState().fileHandle).toBeNull();
     expect(useAppStore.getState().isEditable).toBe(false);
     expect(useAppStore.getState().isHighlightMode).toBe(false);
+    expect(sessionStorage.getItem('leitor_md_document')).toBeNull();
     expect(localStorage.getItem('leitor_md_document')).toBeNull();
   });
 
@@ -400,9 +420,10 @@ describe('Reordenação de Abas e Grupos de Abas com Cores', () => {
     expect(updatedGroup?.color).toBe('green');
     expect(updatedGroup?.collapsed).toBe(true);
 
-    // Verifica persistência no localStorage
-    const savedRaw = localStorage.getItem('leitor_md_open_tabs_v1');
+    // Verifica persistência no sessionStorage (sem vazar para localStorage)
+    const savedRaw = sessionStorage.getItem('leitor_md_open_tabs_v1');
     expect(savedRaw).not.toBeNull();
+    expect(localStorage.getItem('leitor_md_open_tabs_v1')).toBeNull();
     const saved = JSON.parse(savedRaw!);
     expect(saved.groups).toHaveLength(1);
     expect(saved.groups[0].title).toBe('Estudos Atualizados');
@@ -481,10 +502,14 @@ describe('Reordenação de Abas e Grupos de Abas com Cores', () => {
 
 describe('Aba Início (Nova Aba)', () => {
   const mockLocalStorage: Record<string, string> = {};
+  const mockSessionStorage: Record<string, string> = {};
 
   beforeEach(() => {
     for (const key of Object.keys(mockLocalStorage)) {
       delete mockLocalStorage[key];
+    }
+    for (const key of Object.keys(mockSessionStorage)) {
+      delete mockSessionStorage[key];
     }
 
     vi.stubGlobal('localStorage', {
@@ -498,6 +523,21 @@ describe('Aba Início (Nova Aba)', () => {
       clear: () => {
         for (const key of Object.keys(mockLocalStorage)) {
           delete mockLocalStorage[key];
+        }
+      },
+    });
+
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => mockSessionStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        mockSessionStorage[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete mockSessionStorage[k];
+      },
+      clear: () => {
+        for (const key of Object.keys(mockSessionStorage)) {
+          delete mockSessionStorage[key];
         }
       },
     });
@@ -635,8 +675,9 @@ describe('Aba Início (Nova Aba)', () => {
     useAppStore.getState().openTab({ title: 'Doc A.md', content: 'A' });
     const homeId = useAppStore.getState().openHomeTab();
 
-    const raw = mockLocalStorage['leitor_md_open_tabs_v1'];
+    const raw = mockSessionStorage['leitor_md_open_tabs_v1'];
     expect(raw).toBeDefined();
+    expect(mockLocalStorage['leitor_md_open_tabs_v1']).toBeUndefined();
     const parsed = JSON.parse(raw);
     const savedHome = parsed.tabs.find((t: { id: string }) => t.id === homeId);
     expect(savedHome?.kind).toBe('home');
@@ -654,5 +695,154 @@ describe('Aba Início (Nova Aba)', () => {
     expect(state.document).toBeNull();
     expect(state.tabs).toHaveLength(0);
     expect(state.activeTabId).toBeNull();
+  });
+});
+
+describe('Inicialização Limpa vs Recarga de Tema (Boot Lifecycle)', () => {
+  const createStorageStub = (backing: Record<string, string>) => ({
+    getItem: (k: string) => backing[k] ?? null,
+    setItem: (k: string, v: string) => {
+      backing[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete backing[k];
+    },
+    clear: () => {
+      for (const k of Object.keys(backing)) {
+        delete backing[k];
+      }
+    },
+  });
+
+  const sampleSession = {
+    activeTabId: 'tab-1',
+    tabs: [
+      {
+        id: 'tab-1',
+        title: 'Estudo.md',
+        docId: 'doc-1',
+        oneDriveItemId: null,
+        isDirty: false,
+        groupId: 'grp-1',
+        kind: 'doc',
+      },
+    ],
+    groups: [
+      {
+        id: 'grp-1',
+        title: 'Grupo A',
+        color: 'blue',
+        collapsed: false,
+      },
+    ],
+  };
+
+  const sampleDoc = {
+    title: 'Estudo.md',
+    content: '# Estudo',
+    oneDriveItemId: null,
+    lastSavedAt: '12:00:00',
+    isDirty: false,
+    revision: 0,
+    draftRevision: 0,
+    sourceRevision: 0,
+    docId: 'doc-1',
+  };
+
+  it('Caso 1: sem snapshot de troca de tema, inicia limpo na HomeScreen e purga sessionStorage e localStorage legado', async () => {
+    vi.resetModules();
+    const localBacking: Record<string, string> = {
+      leitor_md_document: JSON.stringify(sampleDoc),
+      leitor_md_open_tabs_v1: JSON.stringify(sampleSession),
+      leitor_md_preferences: JSON.stringify({ theme: 'dark' }),
+    };
+    const sessionBacking: Record<string, string> = {
+      leitor_md_document: JSON.stringify(sampleDoc),
+      leitor_md_open_tabs_v1: JSON.stringify(sampleSession),
+    };
+
+    vi.stubGlobal('localStorage', createStorageStub(localBacking));
+    vi.stubGlobal('sessionStorage', createStorageStub(sessionBacking));
+
+    const { useAppStore: freshStore } = await import('./useAppStore');
+    const state = freshStore.getState();
+
+    expect(state.tabs).toEqual([]);
+    expect(state.activeTabId).toBeNull();
+    expect(state.tabGroups).toEqual([]);
+    expect(state.document).toBeNull();
+    expect(sessionBacking['leitor_md_document']).toBeUndefined();
+    expect(sessionBacking['leitor_md_open_tabs_v1']).toBeUndefined();
+    expect(localBacking['leitor_md_document']).toBeUndefined();
+    expect(localBacking['leitor_md_open_tabs_v1']).toBeUndefined();
+    expect(localBacking['leitor_md_preferences']).toBeDefined();
+  });
+
+  it('Caso 2: com snapshot de troca de tema válido e recente, restaura tabs, activeTabId, tabGroups e document', async () => {
+    vi.resetModules();
+    const localBacking: Record<string, string> = {};
+    const sessionBacking: Record<string, string> = {
+      leitor_md_document: JSON.stringify(sampleDoc),
+      leitor_md_open_tabs_v1: JSON.stringify(sampleSession),
+      leitor_md_theme_reload_snapshot_v1: JSON.stringify({
+        tabId: 'tab-1',
+        docId: 'doc-1',
+        scrollY: 100,
+        isEditable: false,
+        isHighlightMode: false,
+        isSourceMode: false,
+        savedAt: Date.now(),
+      }),
+    };
+
+    vi.stubGlobal('localStorage', createStorageStub(localBacking));
+    vi.stubGlobal('sessionStorage', createStorageStub(sessionBacking));
+
+    const { useAppStore: freshStore } = await import('./useAppStore');
+    const state = freshStore.getState();
+
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0].id).toBe('tab-1');
+    expect(state.activeTabId).toBe('tab-1');
+    expect(state.tabGroups).toHaveLength(1);
+    expect(state.tabGroups[0].id).toBe('grp-1');
+    expect(state.document?.title).toBe('Estudo.md');
+    expect(state.document?.content).toBe('# Estudo');
+  });
+
+  it('Caso 3: com snapshot de troca de tema expirado, ignora a sessão, limpa as chaves e inicia limpo', async () => {
+    vi.resetModules();
+    const localBacking: Record<string, string> = {
+      leitor_md_document: JSON.stringify(sampleDoc),
+      leitor_md_open_tabs_v1: JSON.stringify(sampleSession),
+    };
+    const sessionBacking: Record<string, string> = {
+      leitor_md_document: JSON.stringify(sampleDoc),
+      leitor_md_open_tabs_v1: JSON.stringify(sampleSession),
+      leitor_md_theme_reload_snapshot_v1: JSON.stringify({
+        tabId: 'tab-1',
+        docId: 'doc-1',
+        scrollY: 100,
+        isEditable: false,
+        isHighlightMode: false,
+        isSourceMode: false,
+        savedAt: Date.now() - 20_000,
+      }),
+    };
+
+    vi.stubGlobal('localStorage', createStorageStub(localBacking));
+    vi.stubGlobal('sessionStorage', createStorageStub(sessionBacking));
+
+    const { useAppStore: freshStore } = await import('./useAppStore');
+    const state = freshStore.getState();
+
+    expect(state.tabs).toEqual([]);
+    expect(state.activeTabId).toBeNull();
+    expect(state.tabGroups).toEqual([]);
+    expect(state.document).toBeNull();
+    expect(sessionBacking['leitor_md_document']).toBeUndefined();
+    expect(sessionBacking['leitor_md_open_tabs_v1']).toBeUndefined();
+    expect(localBacking['leitor_md_document']).toBeUndefined();
+    expect(localBacking['leitor_md_open_tabs_v1']).toBeUndefined();
   });
 });

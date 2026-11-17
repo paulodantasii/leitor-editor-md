@@ -1,7 +1,21 @@
 import { flushPendingEditorContent } from './editorContentBridge';
-import { flushPendingLocalDocumentSave, loadLocalDocument, loadOpenTabsSession } from './storage';
+import {
+  clearLocalDocument,
+  clearOpenTabsSession,
+  flushPendingLocalDocumentSave,
+  loadLocalDocument,
+  loadOpenTabsSession,
+} from './storage';
+import {
+  clearThemeReloadSnapshot,
+  wasThemeReloadRestoredOnBoot,
+} from './themeReloadSnapshot';
 
 const RELOAD_GUARD_KEY = 'leitor_md_reloaded_build';
+
+export interface ForceAppUpdateOptions {
+  clearSession?: boolean;
+}
 
 export function getCurrentBuildId(): string {
   return typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : 'dev';
@@ -27,9 +41,16 @@ export function flushUserWorkBeforeReload(): void {
 /**
  * Limpa exclusivamente o CacheStorage de ativos web (HTML/JS/CSS) e desregistra
  * Service Workers antigos, preservando 100% do localStorage e IndexedDB.
+ * Quando `options?.clearSession` é `true`, limpa também a sessão de abas/documento ativo.
  */
-export async function forceAppUpdate(): Promise<void> {
-  flushUserWorkBeforeReload();
+export async function forceAppUpdate(options?: ForceAppUpdateOptions): Promise<void> {
+  if (options?.clearSession) {
+    clearLocalDocument();
+    clearOpenTabsSession();
+    clearThemeReloadSnapshot();
+  } else {
+    flushUserWorkBeforeReload();
+  }
 
   try {
     if ('serviceWorker' in navigator) {
@@ -144,7 +165,7 @@ export function initAutoUpdateListeners(): () => void {
   const hasDirtyWork =
     Boolean(localDoc?.isDirty) ||
     Boolean(tabsSession?.tabs?.some((t) => t.isDirty));
-  if (!hasDirtyWork) {
+  if (!wasThemeReloadRestoredOnBoot() && !hasDirtyWork) {
     checkAndApplyAppUpdate();
   }
 

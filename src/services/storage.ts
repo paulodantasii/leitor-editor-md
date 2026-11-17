@@ -6,6 +6,44 @@ const DOC_KEY = 'leitor_md_document';
 const OFFLINE_QUEUE_KEY = 'leitor_md_offline_queue';
 const TABS_KEY = 'leitor_md_open_tabs_v1';
 
+function readSessionItem(key: string): string | null {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      return sessionStorage.getItem(key);
+    }
+  } catch (err) {
+    console.warn(`Falha ao ler "${key}" do sessionStorage:`, err);
+  }
+  return null;
+}
+
+function writeSessionItem(key: string, value: string): void {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(key, value);
+    }
+  } catch (err) {
+    console.warn(`Falha ao gravar "${key}" no sessionStorage:`, err);
+  }
+}
+
+function removeStorageItemBoth(key: string): void {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export const DEFAULT_PREFERENCES: UserPreferences = {
   theme: 'light',
   fontSize: 16,
@@ -49,33 +87,33 @@ function performSaveDoc(docState: DocumentState): void {
   // caso ocorra um salvamento antes da hidratação assíncrona concluir.
   if (docState.storedInDb && (!docState.content || docState.content.length === 0)) {
     try {
-      localStorage.setItem(DOC_KEY, JSON.stringify(docState));
+      writeSessionItem(DOC_KEY, JSON.stringify(docState));
     } catch (err) {
-      console.warn('Falha ao salvar metadados no localStorage:', err);
+      console.warn('Falha ao salvar metadados no sessionStorage:', err);
     }
     return;
   }
 
   try {
     // Para documentos muito grandes (> 400KB), o payload pode travar a thread síncrona
-    // do localStorage ou estourar a cota de 5MB. Salvamos o snapshot com storedInDb: true
-    // no localStorage, enquanto o IndexedDB (assíncrono) retém o conteúdo integral.
+    // do sessionStorage ou estourar a cota de 5MB. Salvamos o snapshot com storedInDb: true
+    // no sessionStorage, enquanto o IndexedDB (assíncrono) retém o conteúdo integral.
     if (docState.content && docState.content.length > 400000) {
       const lightweight: DocumentState = {
         ...docState,
         content: '',
         storedInDb: true,
       };
-      localStorage.setItem(DOC_KEY, JSON.stringify(lightweight));
+      writeSessionItem(DOC_KEY, JSON.stringify(lightweight));
     } else {
       const fullLocal: DocumentState = {
         ...docState,
         storedInDb: false,
       };
-      localStorage.setItem(DOC_KEY, JSON.stringify(fullLocal));
+      writeSessionItem(DOC_KEY, JSON.stringify(fullLocal));
     }
   } catch (err) {
-    console.warn('Falha ao salvar backup síncrono no localStorage (armazenamento prioritário permanece no IndexedDB):', err);
+    console.warn('Falha ao salvar backup síncrono no sessionStorage (armazenamento prioritário permanece no IndexedDB):', err);
   }
 
   // Maintain in IndexedDB recent documents collection
@@ -127,7 +165,8 @@ export function flushPendingLocalDocumentSave(): void {
 }
 
 /**
- * Limpa o documento ativo do LocalStorage e cancela qualquer gravação pendente no debounce.
+ * Limpa o documento ativo do sessionStorage (e eventual legado no localStorage)
+ * e cancela qualquer gravação pendente no debounce.
  */
 export function clearLocalDocument(): void {
   if (saveDebounceTimer) {
@@ -135,23 +174,17 @@ export function clearLocalDocument(): void {
     saveDebounceTimer = null;
   }
   pendingSaveDoc = null;
-  try {
-    localStorage.removeItem(DOC_KEY);
-  } catch {
-    // ignore
-  }
+  removeStorageItemBoth(DOC_KEY);
 }
 
 /**
- * Loads last active document from LocalStorage fallback.
+ * Loads last active document from sessionStorage fallback.
  */
 export function loadLocalDocument(): DocumentState | null {
   try {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem(DOC_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
+    const saved = readSessionItem(DOC_KEY);
+    if (saved) {
+      return JSON.parse(saved);
     }
   } catch (err) {
     console.warn('Failed to load local document backup', err);
@@ -198,44 +231,34 @@ export function clearOfflineQueue(): void {
 }
 
 /**
- * Persiste os metadados da sessão de abas abertas no localStorage.
+ * Persiste os metadados da sessão de abas abertas no sessionStorage.
  */
 export function saveOpenTabsSession(session: OpenTabsSession): void {
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(TABS_KEY, JSON.stringify(session));
-    }
+    writeSessionItem(TABS_KEY, JSON.stringify(session));
   } catch (err) {
-    console.warn('Falha ao salvar sessão de abas no localStorage:', err);
+    console.warn('Falha ao salvar sessão de abas no sessionStorage:', err);
   }
 }
 
 /**
- * Carrega a sessão de abas abertas salva no localStorage.
+ * Carrega a sessão de abas abertas salva no sessionStorage.
  */
 export function loadOpenTabsSession(): OpenTabsSession | null {
   try {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem(TABS_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
+    const saved = readSessionItem(TABS_KEY);
+    if (saved) {
+      return JSON.parse(saved);
     }
   } catch (err) {
-    console.warn('Falha ao carregar sessão de abas do localStorage:', err);
+    console.warn('Falha ao carregar sessão de abas do sessionStorage:', err);
   }
   return null;
 }
 
 /**
- * Remove a sessão de abas abertas do localStorage.
+ * Remove a sessão de abas abertas do sessionStorage e eventual legado do localStorage.
  */
 export function clearOpenTabsSession(): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(TABS_KEY);
-    }
-  } catch {
-    // ignore
-  }
+  removeStorageItemBoth(TABS_KEY);
 }

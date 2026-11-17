@@ -16,11 +16,15 @@ import { useAppStore } from './useAppStore';
 
 describe('Hidratação de arquivos grandes (storedInDb) contra tela branca', () => {
   const mockLocalStorage: Record<string, string> = {};
+  const mockSessionStorage: Record<string, string> = {};
 
   beforeEach(() => {
     idb.clear();
     for (const key of Object.keys(mockLocalStorage)) {
       delete mockLocalStorage[key];
+    }
+    for (const key of Object.keys(mockSessionStorage)) {
+      delete mockSessionStorage[key];
     }
 
     vi.stubGlobal('localStorage', {
@@ -34,6 +38,21 @@ describe('Hidratação de arquivos grandes (storedInDb) contra tela branca', () 
       clear: () => {
         for (const key of Object.keys(mockLocalStorage)) {
           delete mockLocalStorage[key];
+        }
+      },
+    });
+
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => mockSessionStorage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        mockSessionStorage[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete mockSessionStorage[k];
+      },
+      clear: () => {
+        for (const key of Object.keys(mockSessionStorage)) {
+          delete mockSessionStorage[key];
         }
       },
     });

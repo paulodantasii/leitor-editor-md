@@ -32,6 +32,7 @@ import {
 import { isBlankUntitledDocument, isHomeTab, HOME_TAB_TITLE } from '../services/documentUtils';
 import { flushPendingEditorContent } from '../services/editorContentBridge';
 import { renameOneDriveFile } from '../services/oneDriveService';
+import { hasValidThemeReloadSnapshot } from '../services/themeReloadSnapshot';
 
 interface AppState {
   // Preferences
@@ -184,15 +185,12 @@ const persistTabsSession = (activeTabId: string | null, tabs: TabItem[], groups:
   });
 };
 
-const getInitialDoc = (): DocumentState | null => {
+const getInitialDoc = (allowBlank: boolean = false): DocumentState | null => {
   const cached = loadLocalDocument();
-  // Ignora (e descarta) "Sem Título.md" em branco herdado de versões antigas
-  if (cached && isBlankUntitledDocument(cached)) {
-    try {
-      localStorage.removeItem('leitor_md_document');
-    } catch {
-      // ignore
-    }
+  // Ignora (e descarta) "Sem Título.md" em branco herdado de versões antigas,
+  // exceto quando explicitamente preservado durante uma recarga de tema.
+  if (cached && !allowBlank && isBlankUntitledDocument(cached)) {
+    clearLocalDocument();
     return null;
   } else if (cached && (cached.content !== undefined || cached.title)) {
     const rev = cached.revision ?? (cached.isDirty ? 1 : 0);
@@ -210,50 +208,64 @@ const getInitialDoc = (): DocumentState | null => {
   return null;
 };
 
-const savedSession = loadOpenTabsSession();
-const sessionActiveId = savedSession?.tabs?.length ? (savedSession.activeTabId || savedSession.tabs[0].id) : null;
-const isHomeSession = Boolean(sessionActiveId && savedSession?.tabs.find((t) => t.id === sessionActiveId)?.kind === 'home');
-const initialDoc: DocumentState | null = isHomeSession ? null : getInitialDoc();
+const isThemeReload = hasValidThemeReloadSnapshot();
 
+let savedSession: ReturnType<typeof loadOpenTabsSession> = null;
+let initialDoc: DocumentState | null = null;
 let initialTabs: TabItem[] = [];
 let initialActiveTabId: string | null = null;
+let initialTabGroups: TabGroup[] = [];
 
-if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
-  initialActiveTabId = savedSession.activeTabId || savedSession.tabs[0].id;
-  initialTabs = savedSession.tabs.map((t) => {
-    const isCurActive = t.id === initialActiveTabId;
-    const kind = t.kind ?? 'doc';
-    return {
-      id: t.id,
-      kind,
-      title: kind === 'home' ? HOME_TAB_TITLE : t.title,
-      isDirty: t.isDirty,
-      docId: t.docId,
-      oneDriveItemId: t.oneDriveItemId,
-      fileHandle: isCurActive && initialDoc ? initialDoc.fileHandle || null : null,
-      groupId: t.groupId ?? null,
-      snapshot: isCurActive && initialDoc ? initialDoc : undefined,
-    };
-  });
-} else if (initialDoc) {
-  const tabId = 'tab-initial';
-  initialTabs = [
-    {
-      id: tabId,
-      title: initialDoc.title,
-      isDirty: initialDoc.isDirty,
-      docId: initialDoc.docId || 'doc-initial',
-      oneDriveItemId: initialDoc.oneDriveItemId,
-      fileHandle: initialDoc.fileHandle || null,
-      groupId: null,
-      snapshot: initialDoc,
-    },
-  ];
-  initialActiveTabId = tabId;
+if (!isThemeReload) {
+  clearLocalDocument();
+  clearOpenTabsSession();
+} else {
+  savedSession = loadOpenTabsSession();
+  const sessionActiveId = savedSession?.tabs?.length
+    ? savedSession.activeTabId || savedSession.tabs[0].id
+    : null;
+  const isHomeSession = Boolean(
+    sessionActiveId && savedSession?.tabs.find((t) => t.id === sessionActiveId)?.kind === 'home'
+  );
+  initialDoc = isHomeSession ? null : getInitialDoc(true);
+
+  if (savedSession && savedSession.tabs && savedSession.tabs.length > 0) {
+    initialActiveTabId = savedSession.activeTabId || savedSession.tabs[0].id;
+    initialTabs = savedSession.tabs.map((t) => {
+      const isCurActive = t.id === initialActiveTabId;
+      const kind = t.kind ?? 'doc';
+      return {
+        id: t.id,
+        kind,
+        title: kind === 'home' ? HOME_TAB_TITLE : t.title,
+        isDirty: t.isDirty,
+        docId: t.docId,
+        oneDriveItemId: t.oneDriveItemId,
+        fileHandle: isCurActive && initialDoc ? initialDoc.fileHandle || null : null,
+        groupId: t.groupId ?? null,
+        snapshot: isCurActive && initialDoc ? initialDoc : undefined,
+      };
+    });
+  } else if (initialDoc) {
+    const tabId = 'tab-initial';
+    initialTabs = [
+      {
+        id: tabId,
+        title: initialDoc.title,
+        isDirty: initialDoc.isDirty,
+        docId: initialDoc.docId || 'doc-initial',
+        oneDriveItemId: initialDoc.oneDriveItemId,
+        fileHandle: initialDoc.fileHandle || null,
+        groupId: null,
+        snapshot: initialDoc,
+      },
+    ];
+    initialActiveTabId = tabId;
+  }
+
+  initialTabGroups = savedSession?.groups ? pruneOrphanGroups(initialTabs, savedSession.groups) : [];
+  initialTabs = normalizeGroupContiguity(initialTabs);
 }
-
-const initialTabGroups: TabGroup[] = savedSession?.groups ? pruneOrphanGroups(initialTabs, savedSession.groups) : [];
-initialTabs = normalizeGroupContiguity(initialTabs);
 
 // Ao deixar um documento para ir à Home, garante que o rascunho local não se perca
 // (o efeito de autosave cancela o timer pendente quando document vira null).

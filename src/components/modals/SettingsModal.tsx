@@ -7,7 +7,8 @@ import {
   loginWithOneDrive,
   logoutOneDrive,
 } from '../../services/msalService';
-import { forceAppUpdate } from '../../services/appUpdateService';
+import { executeCleanAppReload } from '../../services/cleanReloadService';
+import { ReloadAppConfirmModal } from './ReloadAppConfirmModal';
 import {
   X,
   Key,
@@ -35,16 +36,31 @@ export const SettingsModal: React.FC = () => {
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isReloadConfirmOpen, setIsReloadConfirmOpen] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
 
   useEffect(() => {
     if (isSettingsModalOpen) {
       setClientIdInput(getStoredClientId());
       setAuthError(null);
       setSavedSuccess(false);
+      setIsReloadConfirmOpen(false);
+      setIsReloading(false);
     }
   }, [isSettingsModalOpen]);
 
   if (!isSettingsModalOpen) return null;
+
+  const handleConfirmReloadApp = async () => {
+    if (isReloading) return;
+    setIsReloading(true);
+    try {
+      await executeCleanAppReload();
+    } catch (err) {
+      console.warn('Erro ao recarregar aplicativo:', err);
+      setIsReloading(false);
+    }
+  };
 
   const handleSaveClientId = () => {
     setStoredClientId(clientId.trim());
@@ -222,11 +238,11 @@ export const SettingsModal: React.FC = () => {
           </div>
           <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 p-3.5 rounded-xl flex items-center justify-between gap-3">
             <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Limpa o cache de ativos estáticos e recarrega a versão mais recente do aplicativo (seus documentos salvos são preservados).
+              Limpa o cache de ativos estáticos, fecha todas as abas abertas e recarrega a versão mais recente do aplicativo (seus documentos salvos são preservados).
             </div>
             <button
               type="button"
-              onClick={forceAppUpdate}
+              onClick={() => setIsReloadConfirmOpen(true)}
               className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300/80 dark:hover:bg-slate-600 flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer"
             >
               <RotateCw className="w-3.5 h-3.5 text-blue-500" />
@@ -246,6 +262,14 @@ export const SettingsModal: React.FC = () => {
           </button>
         </div>
       </div>
+      {isReloadConfirmOpen && (
+        <ReloadAppConfirmModal
+          isOpen={isReloadConfirmOpen}
+          isReloading={isReloading}
+          onClose={() => setIsReloadConfirmOpen(false)}
+          onConfirmReload={handleConfirmReloadApp}
+        />
+      )}
     </div>
   );
 };
