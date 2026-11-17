@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Schema } from '@tiptap/pm/model';
 import { MarkdownSerializer as PmMarkdownSerializer, defaultMarkdownSerializer } from 'prosemirror-markdown';
-import { serializeDocIncrementally } from './incrementalMarkdownSerializer';
+import {
+  getTopLevelBlockCharRanges,
+  serializeDocIncrementally,
+} from './incrementalMarkdownSerializer';
 
 const testSchema = new Schema({
   nodes: {
@@ -217,5 +220,30 @@ describe('incrementalMarkdownSerializer', () => {
     const expected = serializer.serialize(doc);
     const actual = serializeDocIncrementally(fakeEditor);
     expect(actual).toBe(expected);
+  });
+
+  it('getTopLevelBlockCharRanges retorna intervalos [start, end] exatos para cada bloco incluindo vazios', () => {
+    const serializer = createTestSerializer();
+    const doc = testSchema.node('doc', null, [
+      testSchema.node('heading', { level: 1 }, [testSchema.text('Cap. I')]),
+      testSchema.node('paragraph', null, [testSchema.text('Art. 1º Primeiro')]),
+      testSchema.node('paragraph', null, []), // bloco vazio preservando paridade 1:1 com DOM
+      testSchema.node('paragraph', null, [testSchema.text('Art. 2º Segundo')]),
+    ]);
+
+    const fakeEditor: any = {
+      isDestroyed: false,
+      state: { doc },
+      storage: { markdown: { serializer } },
+    };
+
+    const md = serializeDocIncrementally(fakeEditor);
+    const ranges = getTopLevelBlockCharRanges(fakeEditor);
+
+    expect(ranges).toHaveLength(doc.childCount);
+    expect(md.slice(ranges[0].start, ranges[0].end)).toBe('# Cap. I');
+    expect(md.slice(ranges[1].start, ranges[1].end)).toBe('Art. 1º Primeiro');
+    expect(ranges[2].start).toBe(ranges[2].end);
+    expect(md.slice(ranges[3].start, ranges[3].end)).toBe('Art. 2º Segundo');
   });
 });

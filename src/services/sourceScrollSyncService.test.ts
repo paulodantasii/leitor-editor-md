@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   lerp,
   inverseLerp,
   computePiecewiseAnchorFromStops,
   resolveTargetYFromPiecewiseAnchor,
+  captureVisualScrollAnchor,
+  resolveVisualTargetScrollY,
 } from './sourceScrollSyncService';
 
 describe('sourceScrollSyncService — Mapeamento Bidirecional de Scroll (Piecewise Linear)', () => {
@@ -106,6 +108,61 @@ describe('sourceScrollSyncService — Mapeamento Bidirecional de Scroll (Piecewi
 
       const targetY = resolveTargetYFromPiecewiseAnchor([], 100, 4100, anchor);
       expect(targetY).toBeCloseTo(1100, 5);
+    });
+  });
+
+  describe('ancoragem exata por bloco (blockCharRanges)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('captura e resolve o charOffset exato do parágrafo mesmo quando blocos anteriores têm alta densidade de tags HTML', () => {
+      const scrollY = 1000;
+      vi.stubGlobal('window', {
+        scrollY,
+        innerHeight: 800,
+      });
+      vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '78px' }));
+      vi.stubGlobal('document', {
+        documentElement: { scrollHeight: 10000 },
+        querySelector: () => null,
+      });
+
+      // stickyTopOffsetPx = Math.round(78 + 14) = 92; anchorDocY = 1000 + 92 + 8 = 1100
+      // Bloco 0: H1 (docY 100..150, chars 0..20)
+      // Bloco 1: parágrafo com dezenas de <mark> (docY 160..600, chars 22..5022 -> 5000 chars!)
+      // Bloco 2: Art. 8º (docY 620..1220, chars 5024..5224 -> anchorDocY=1100 está a 80% deste bloco!)
+      const blockEls = [
+        { getBoundingClientRect: () => ({ top: 100 - scrollY, bottom: 150 - scrollY }), textContent: 'Cap I' },
+        { getBoundingClientRect: () => ({ top: 160 - scrollY, bottom: 600 - scrollY }), textContent: 'Art 7' },
+        { getBoundingClientRect: () => ({ top: 620 - scrollY, bottom: 1220 - scrollY }), textContent: 'Art 8' },
+      ];
+      const proseMirrorEl = {
+        getBoundingClientRect: () => ({ top: 100 - scrollY, bottom: 1500 - scrollY }),
+      };
+      const container: any = {
+        querySelector: (sel: string) => (sel === '.ProseMirror' ? proseMirrorEl : null),
+        querySelectorAll: (sel: string) => {
+          if (sel === ':scope .ProseMirror > *') return blockEls;
+          return [blockEls[0]];
+        },
+      };
+
+      const blockCharRanges = [
+        { start: 0, end: 20 },
+        { start: 22, end: 5022 },
+        { start: 5024, end: 5224 },
+      ];
+      const fakeMd = '# Cap I\n\n' + 'x'.repeat(5000) + '\n\n' + 'y'.repeat(200);
+
+      const anchor = captureVisualScrollAnchor(container, fakeMd, blockCharRanges);
+      expect(anchor.hasExactCharOffset).toBe(true);
+      // 80% de (5024..5224) = 5024 + 160 = 5184
+      expect(anchor.markdownCharOffset).toBe(5184);
+
+      // Caminho de volta (Código-Fonte -> Visual) deve devolver o scrollY exato (1000)
+      const resolvedScrollY = resolveVisualTargetScrollY(container, anchor, blockCharRanges);
+      expect(resolvedScrollY).toBe(1000);
     });
   });
 });

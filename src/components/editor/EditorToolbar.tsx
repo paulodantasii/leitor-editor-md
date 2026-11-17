@@ -59,38 +59,43 @@ interface EditorToolbarProps {
 }
 
 function computeToolbarStateKey(editor: Editor): string {
-  const { selection, storedMarks } = editor.state;
-  const { empty, from, to, $from } = selection;
+  if (!editor || editor.isDestroyed || !editor.state) return '';
+  try {
+    const { selection, storedMarks } = editor.state;
+    const { empty, from, to, $from } = selection;
 
-  let ancestorFlags = 0;
-  let activeAlign = '';
-  for (let d = $from.depth; d > 0; d--) {
-    const node = $from.node(d);
-    const name = node.type.name;
-    if (!activeAlign && node.attrs?.textAlign) {
-      activeAlign = String(node.attrs.textAlign);
+    let ancestorFlags = 0;
+    let activeAlign = '';
+    for (let d = $from.depth; d > 0; d--) {
+      const node = $from.node(d);
+      const name = node.type.name;
+      if (!activeAlign && node.attrs?.textAlign) {
+        activeAlign = String(node.attrs.textAlign);
+      }
+      if (name === 'bulletList') ancestorFlags |= 1;
+      else if (name === 'orderedList') ancestorFlags |= 2;
+      else if (name === 'blockquote') ancestorFlags |= 4;
+      else if (name === 'table') ancestorFlags |= 8;
     }
-    if (name === 'bulletList') ancestorFlags |= 1;
-    else if (name === 'orderedList') ancestorFlags |= 2;
-    else if (name === 'blockquote') ancestorFlags |= 4;
-    else if (name === 'table') ancestorFlags |= 8;
+
+    const parent = $from.parent;
+    const activeMarks = empty ? (storedMarks || $from.marks()) : $from.marks();
+    const markSummary = activeMarks
+      .map((m) =>
+        m.type.name === 'customHighlight'
+          ? `hl:${m.attrs?.color || ''}:${m.attrs?.id || ''}`
+          : m.type.name
+      )
+      .join(',');
+
+    const rangePart = empty ? 'e' : `r:${from}-${to}`;
+    const canUndo = editor.can().undo() ? 1 : 0;
+    const canRedo = editor.can().redo() ? 1 : 0;
+
+    return `${rangePart}|${parent.type.name}:${parent.attrs?.level ?? ''}|${activeAlign}|${ancestorFlags}|${markSummary}|${canUndo}${canRedo}`;
+  } catch {
+    return '';
   }
-
-  const parent = $from.parent;
-  const activeMarks = empty ? (storedMarks || $from.marks()) : $from.marks();
-  const markSummary = activeMarks
-    .map((m) =>
-      m.type.name === 'customHighlight'
-        ? `hl:${m.attrs?.color || ''}:${m.attrs?.id || ''}`
-        : m.type.name
-    )
-    .join(',');
-
-  const rangePart = empty ? 'e' : `r:${from}-${to}`;
-  const canUndo = editor.can().undo() ? 1 : 0;
-  const canRedo = editor.can().redo() ? 1 : 0;
-
-  return `${rangePart}|${parent.type.name}:${parent.attrs?.level ?? ''}|${activeAlign}|${ancestorFlags}|${markSummary}|${canUndo}${canRedo}`;
 }
 
 const COLOR_BAR_MAP: Record<HighlightColor, string> = {

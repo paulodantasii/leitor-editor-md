@@ -67,6 +67,72 @@ function serializeSingleTopLevelBlock(
   return blockMd;
 }
 
+export interface BlockCharRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+function serializeBlocksInternal(
+  doc: any,
+  serializer: { serialize: (content: any) => string },
+  collectRanges: boolean
+): { markdown: string; ranges: BlockCharRange[] } {
+  const outputParts: string[] = [];
+  const ranges: BlockCharRange[] = [];
+  let cursor = 0;
+  let prevNonEmptyMd: string | null = null;
+  let prevNonEmptyBlockNode: any = null;
+  let prevRawBlockNode: any = null;
+
+  for (let i = 0; i < doc.childCount; i++) {
+    const blockNode = doc.child(i);
+    const blockMd = serializeSingleTopLevelBlock(serializer, doc, blockNode, i);
+
+    if (blockMd.length > 0) {
+      if (prevNonEmptyMd !== null) {
+        const blockTypeName = blockNode?.type?.name;
+        const isAdjacentSameListType =
+          prevNonEmptyBlockNode === prevRawBlockNode &&
+          prevNonEmptyBlockNode?.type === blockNode?.type &&
+          (blockTypeName === 'bulletList' || blockTypeName === 'orderedList');
+
+        // Reproduz exatamente flushClose(3) para listas adjacentes do mesmo tipo e flushClose(2) nos demais casos
+        const endsWithNewline = prevNonEmptyMd.endsWith('\n');
+        const separator = isAdjacentSameListType
+          ? endsWithNewline
+            ? '\n\n'
+            : '\n\n\n'
+          : endsWithNewline
+          ? '\n'
+          : '\n\n';
+
+        outputParts.push(separator);
+        if (collectRanges) {
+          cursor += separator.length;
+        }
+      }
+
+      const start = cursor;
+      outputParts.push(blockMd);
+      if (collectRanges) {
+        cursor += blockMd.length;
+        ranges.push({ start, end: cursor });
+      }
+      prevNonEmptyMd = blockMd;
+      prevNonEmptyBlockNode = blockNode;
+    } else if (collectRanges) {
+      ranges.push({ start: cursor, end: cursor });
+    }
+
+    prevRawBlockNode = blockNode;
+  }
+
+  return {
+    markdown: outputParts.join(''),
+    ranges,
+  };
+}
+
 /**
  * Serializa o documento do Tiptap/ProseMirror para Markdown de forma incremental,
  * reutilizando via WeakMap a string Markdown de todos os blocos que não mudaram.
@@ -90,41 +156,44 @@ export function serializeDocIncrementally(editor: Editor | null): string {
     return String(serializer.serialize(doc) ?? '');
   }
 
-  const outputParts: string[] = [];
-  let prevNonEmptyMd: string | null = null;
-  let prevNonEmptyBlockNode: any = null;
-  let prevRawBlockNode: any = null;
-
-  for (let i = 0; i < doc.childCount; i++) {
-    const blockNode = doc.child(i);
-    const blockMd = serializeSingleTopLevelBlock(serializer, doc, blockNode, i);
-
-    if (blockMd.length > 0) {
-      if (prevNonEmptyMd !== null) {
-        const blockTypeName = blockNode?.type?.name;
-        const isAdjacentSameListType =
-          prevNonEmptyBlockNode === prevRawBlockNode &&
-          prevNonEmptyBlockNode?.type === blockNode?.type &&
-          (blockTypeName === 'bulletList' || blockTypeName === 'orderedList');
-
-        // Reproduz exatamente flushClose(3) para listas adjacentes do mesmo tipo e flushClose(2) nos demais casos
-        const endsWithNewline = prevNonEmptyMd.endsWith('\n');
-        if (isAdjacentSameListType) {
-          outputParts.push(endsWithNewline ? '\n\n' : '\n\n\n');
-        } else {
-          outputParts.push(endsWithNewline ? '\n' : '\n\n');
-        }
-      }
-
-      outputParts.push(blockMd);
-      prevNonEmptyMd = blockMd;
-      prevNonEmptyBlockNode = blockNode;
+  try {
+    return serializeBlocksInternal(doc, serializer, false).markdown;
+  } catch (err) {
+    console.warn('Falha na serialização incremental; usando fallback completo:', err);
+    if (typeof markdownStorage?.getMarkdown === 'function') {
+      return String(markdownStorage.getMarkdown() ?? '');
     }
+    return String(serializer.serialize(doc) ?? '');
+  }
+}
 
-    prevRawBlockNode = blockNode;
+/**
+ * Retorna os intervalos [start, end] de caracteres no Markdown final correspondentes
+ * a cada bloco de 1º nível (`doc.child(i)`), reutilizando o cache WeakMap em O(1) por bloco.
+ */
+export function getTopLevelBlockCharRanges(
+  editor: Editor | null
+): ReadonlyArray<BlockCharRange> {
+  if (!editor || editor.isDestroyed) {
+    return [];
   }
 
-  return outputParts.join('');
+  const doc = editor.state?.doc as any;
+  const serializer = (editor.storage as any)?.markdown?.serializer;
+
+  if (!doc || !serializer || typeof serializer.serialize !== 'function') {
+    return [];
+  }
+
+  if (typeof doc.childCount !== 'number' || typeof doc.child !== 'function') {
+    return [];
+  }
+
+  try {
+    return serializeBlocksInternal(doc, serializer, true).ranges;
+  } catch {
+    return [];
+  }
 }
 
 /**

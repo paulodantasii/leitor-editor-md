@@ -259,7 +259,12 @@ export function areHeadingsEqual(
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].level !== b[i].level || a[i].text !== b[i].text) {
+    if (
+      a[i].level !== b[i].level ||
+      a[i].text !== b[i].text ||
+      a[i].charOffset !== b[i].charOffset ||
+      a[i].pmPos !== b[i].pmPos
+    ) {
       return false;
     }
   }

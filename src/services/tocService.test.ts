@@ -4,6 +4,7 @@ import {
   extractHeadingsFromMarkdown,
   computeBreadcrumbTrail,
   findActiveHeadingIndexByTops,
+  areHeadingsEqual,
   updateTocState,
   getTocSnapshot,
   resetTocState,
@@ -122,6 +123,27 @@ describe('tocService', () => {
       resetTocState();
       expect(getTocSnapshot().headings).toHaveLength(0);
       expect(getTocSnapshot().activeIndex).toBe(-1);
+    });
+
+    it('areHeadingsEqual detecta mudança entre pmPos (Visual) e charOffset (Código-Fonte)', () => {
+      const visualHeadings = [
+        { id: 'h-0-1', index: 0, level: 1, text: 'Título', pmPos: 0 },
+        { id: 'h-1-2', index: 1, level: 2, text: 'Capítulo', pmPos: 45 },
+      ];
+      const sourceHeadings = [
+        { id: 'h-0-1', index: 0, level: 1, text: 'Título', charOffset: 0 },
+        { id: 'h-1-2', index: 1, level: 2, text: 'Capítulo', charOffset: 120 },
+      ];
+
+      expect(areHeadingsEqual(visualHeadings, sourceHeadings)).toBe(false);
+
+      updateTocState(visualHeadings, 0);
+      expect(getTocSnapshot().headings[1].pmPos).toBe(45);
+      expect(getTocSnapshot().headings[1].charOffset).toBeUndefined();
+
+      updateTocState(sourceHeadings, 0);
+      expect(getTocSnapshot().headings[1].charOffset).toBe(120);
+      expect(getTocSnapshot().headings[1].pmPos).toBeUndefined();
     });
   });
 });

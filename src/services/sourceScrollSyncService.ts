@@ -30,6 +30,10 @@ export interface ScrollSyncAnchor {
    * Offset de caractere estimado ou exato no Markdown bruto (quando disponível).
    */
   readonly markdownCharOffset?: number;
+  /**
+   * Indica que `markdownCharOffset` foi calculado diretamente a partir do bloco visual ativo.
+   */
+  readonly hasExactCharOffset?: boolean;
 }
 
 const MIRROR_STYLE_PROPS = [
@@ -344,7 +348,8 @@ export function getNonEmptyVisualHeadingElements(
  */
 export function captureVisualScrollAnchor(
   container: HTMLElement | null,
-  markdown: string
+  markdown: string,
+  blockCharRanges?: ReadonlyArray<{ start: number; end: number }>
 ): ScrollSyncAnchor {
   if (typeof window === 'undefined' || !container) {
     return {
@@ -391,7 +396,44 @@ export function captureVisualScrollAnchor(
     anchorDocY
   );
 
-  // Estima também o charOffset correspondente no Markdown bruto usando os títulos extraídos
+  // Tenta ancoragem exata 1:1 pelo bloco visual (.ProseMirror > *) na linha de leitura
+  if (blockCharRanges && blockCharRanges.length > 0) {
+    const blockEls = container.querySelectorAll(':scope .ProseMirror > *');
+    if (blockEls.length === blockCharRanges.length) {
+      let low = 0;
+      let high = blockEls.length - 1;
+      let blockIdx = 0;
+      while (low <= high) {
+        const mid = (low + high) >>> 1;
+        const midTopDocY = blockEls[mid].getBoundingClientRect().top + scrollY;
+        if (midTopDocY <= anchorDocY) {
+          blockIdx = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      const blockRect = blockEls[blockIdx].getBoundingClientRect();
+      const blockTopDocY = blockRect.top + scrollY;
+      const blockBottomDocY = Math.max(blockTopDocY + 1, blockRect.bottom + scrollY);
+      const blockProgress = inverseLerp(blockTopDocY, blockBottomDocY, anchorDocY);
+      const range = blockCharRanges[blockIdx];
+      const exactCharOffset = Math.round(lerp(range.start, range.end, blockProgress));
+
+      return {
+        isAtVeryTop: false,
+        isAtVeryBottom,
+        headingIndex: piecewise.headingIndex,
+        segmentProgress: piecewise.segmentProgress,
+        globalProgress: piecewise.globalProgress,
+        markdownCharOffset: exactCharOffset,
+        hasExactCharOffset: true,
+      };
+    }
+  }
+
+  // Fallback: estima o charOffset correspondente no Markdown bruto usando os títulos extraídos
   const mdHeadings = extractHeadingsFromMarkdown(markdown);
   let estimatedCharOffset = Math.round(piecewise.globalProgress * markdown.length);
 
@@ -508,7 +550,10 @@ export function resolveSourceTargetScrollY(
 
   let targetAnchorDocY: number;
 
-  if (mdHeadings.length > 0 && anchor.headingIndex >= -1) {
+  if (anchor.hasExactCharOffset && typeof anchor.markdownCharOffset === 'number') {
+    const localY = measureTextareaOffsetTopPx(textarea, markdown, anchor.markdownCharOffset);
+    targetAnchorDocY = textareaTopDocY + localY;
+  } else if (mdHeadings.length > 0 && anchor.headingIndex >= -1) {
     const charOffsets = mdHeadings.map((h) => h.charOffset ?? 0);
     const localOffsetsPx = measureMultipleTextareaOffsetsTopPx(textarea, markdown, charOffsets);
     const stopsDocY = localOffsetsPx.map((localY) => textareaTopDocY + localY);
@@ -535,7 +580,8 @@ export function resolveSourceTargetScrollY(
  */
 export function resolveVisualTargetScrollY(
   container: HTMLElement,
-  anchor: ScrollSyncAnchor
+  anchor: ScrollSyncAnchor,
+  blockCharRanges?: ReadonlyArray<{ start: number; end: number }>
 ): number {
   if (typeof window === 'undefined') return 0;
   if (anchor.isAtVeryTop) return 0;
@@ -544,12 +590,39 @@ export function resolveVisualTargetScrollY(
   if (anchor.isAtVeryBottom) return maxScrollY;
 
   const scrollY = window.scrollY;
+  const stickyOffsetPx = getStickyTopOffsetPx();
+
+  // Tenta resolver diretamente pelo bloco correspondente ao markdownCharOffset
+  if (typeof anchor.markdownCharOffset === 'number' && blockCharRanges && blockCharRanges.length > 0) {
+    const blockEls = container.querySelectorAll(':scope .ProseMirror > *');
+    if (blockEls.length === blockCharRanges.length) {
+      let low = 0;
+      let high = blockCharRanges.length - 1;
+      let blockIdx = 0;
+      while (low <= high) {
+        const mid = (low + high) >>> 1;
+        if (blockCharRanges[mid].start <= anchor.markdownCharOffset) {
+          blockIdx = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      const elRect = blockEls[blockIdx].getBoundingClientRect();
+      const range = blockCharRanges[blockIdx];
+      const t = range.end > range.start ? inverseLerp(range.start, range.end, anchor.markdownCharOffset) : 0;
+      const targetAnchorDocY = lerp(elRect.top + scrollY, elRect.bottom + scrollY, t);
+      const rawTargetScrollY = targetAnchorDocY - stickyOffsetPx - 8;
+      return Math.max(0, Math.min(Math.round(rawTargetScrollY), maxScrollY));
+    }
+  }
+
   const proseMirrorEl = (container.querySelector('.ProseMirror') as HTMLElement | null) || container;
   const pmRect = proseMirrorEl.getBoundingClientRect();
   const containerTopDocY = pmRect.top + scrollY;
   const containerBottomDocY = Math.max(containerTopDocY + 1, pmRect.bottom + scrollY);
 
-  const stickyOffsetPx = getStickyTopOffsetPx();
   const headingEls = getNonEmptyVisualHeadingElements(container);
   const stopsDocY = headingEls.map((el) => el.getBoundingClientRect().top + scrollY);
 

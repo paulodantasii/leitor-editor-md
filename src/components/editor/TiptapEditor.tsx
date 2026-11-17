@@ -51,6 +51,7 @@ import {
   pulseHeadingElement,
 } from '../../services/tocService';
 import {
+  getTopLevelBlockCharRanges,
   serializeDocIncrementally,
   warmUpIncrementalMarkdownCache,
 } from '../../services/incrementalMarkdownSerializer';
@@ -536,16 +537,12 @@ export const TiptapEditor: React.FC = () => {
         return findActiveHeadingIndexByTops(estimatedTops, thresholdY);
       }
 
-      let headingEls = cachedDomHeadingsRef.current;
-      if (headingEls.length === 0 || !headingEls[0].isConnected) {
+      const queryValidHeadingEls = (): HTMLElement[] => {
         const container = containerRef.current;
-        if (!container) return 0;
-
+        if (!container) return [];
         const domHeadings = container.querySelectorAll(
           '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6'
         );
-        if (domHeadings.length === 0) return 0;
-
         const validEls: HTMLElement[] = [];
         for (let i = 0; i < domHeadings.length; i++) {
           const el = domHeadings[i] as HTMLElement;
@@ -554,7 +551,17 @@ export const TiptapEditor: React.FC = () => {
           }
         }
         cachedDomHeadingsRef.current = validEls;
-        headingEls = validEls;
+        return validEls;
+      };
+
+      let headingEls = cachedDomHeadingsRef.current;
+      if (
+        headingEls.length === 0 ||
+        headingEls.length !== headingsCount ||
+        !headingEls[0].isConnected ||
+        !headingEls[headingEls.length - 1].isConnected
+      ) {
+        headingEls = queryValidHeadingEls();
       }
 
       if (headingEls.length === 0) return 0;
@@ -563,9 +570,19 @@ export const TiptapEditor: React.FC = () => {
       let low = 0;
       let high = headingEls.length - 1;
       let activeIdx = -1;
+      let refreshed = false;
 
       while (low <= high) {
         const mid = (low + high) >>> 1;
+        if (!headingEls[mid].isConnected && !refreshed) {
+          refreshed = true;
+          headingEls = queryValidHeadingEls();
+          if (headingEls.length === 0) return 0;
+          low = 0;
+          high = headingEls.length - 1;
+          activeIdx = -1;
+          continue;
+        }
         const top = headingEls[mid].getBoundingClientRect().top;
         if (top <= thresholdY) {
           activeIdx = mid;
@@ -752,12 +769,20 @@ export const TiptapEditor: React.FC = () => {
       lastEmittedMarkdownRef.current ??
       useAppStore.getState().document?.content ??
       '';
-    return captureVisualScrollAnchor(containerRef.current, md);
+    const blockRanges = getTopLevelBlockCharRanges(editorRef.current);
+    return captureVisualScrollAnchor(containerRef.current, md, blockRanges);
   }, []);
 
   const handleToggleSourceModeWithScrollSync = useCallback(() => {
     if (hasPendingBridgeChanges()) {
       flushContent();
+    }
+    if (!isSourceModeRef.current) {
+      const latestMd = useAppStore.getState().document?.content ?? '';
+      if (latestMd !== rawContentRef.current) {
+        rawContentRef.current = latestMd;
+        setRawContent(latestMd);
+      }
     }
     lastScrollSyncAnchorRef.current = captureCurrentScrollAnchorSnapshot();
     toggleSourceMode();
@@ -855,7 +880,8 @@ export const TiptapEditor: React.FC = () => {
       const raf1 = requestAnimationFrame(() => {
         const container = containerRef.current;
         if (container) {
-          const targetScrollY = resolveVisualTargetScrollY(container, anchorToRestore);
+          const blockRanges = getTopLevelBlockCharRanges(editor);
+          const targetScrollY = resolveVisualTargetScrollY(container, anchorToRestore, blockRanges);
           window.scrollTo({ top: targetScrollY, left: 0, behavior: 'instant' });
 
           const state = useAppStore.getState();
@@ -1516,11 +1542,11 @@ export const TiptapEditor: React.FC = () => {
         } ${isHighlightMode ? 'highlight-mode-active' : ''} ${isEditable ? 'editor-mode-active' : ''} print:max-w-none print:w-full print:p-0 print:m-0`}
         style={{ fontSize: `${preferences.fontSize}px` }}
       >
-        {editor && !isEditable && (
+        {editor && (
           <BubbleMenu 
             editor={editor} 
             tippyOptions={{ duration: 100 }}
-            shouldShow={({ editor }) => !isEditable && isPopoverOpenRef.current && editor.isActive('customHighlight')}
+            shouldShow={({ editor }) => isPopoverOpenRef.current && !isEditable && editor.isActive('customHighlight')}
           >
             <HighlightPopover
               activeColor={activeHighlightColor}
