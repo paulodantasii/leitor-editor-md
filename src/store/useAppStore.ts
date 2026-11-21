@@ -48,7 +48,7 @@ interface AppState {
   switchTab: (tabId: string) => Promise<void>;
   closeTab: (tabId: string, forceWithoutSaving?: boolean) => void;
   renameTab: (tabId: string, newTitle: string) => void;
-  reorderTabs: (sourceTabId: string, targetTabId: string, position?: 'before' | 'after', adoptTargetGroup?: boolean) => void;
+  reorderTabs: (sourceTabId: string, targetTabId: string, position?: 'before' | 'after', adoptTargetGroup?: boolean | 'ungroup') => void;
   moveTabGroup: (groupId: string, targetTabId: string, position?: 'before' | 'after') => void;
   createTabGroup: (tabIds: string[], options?: { title?: string; color?: HighlightColor }) => string;
   assignTabToGroup: (tabId: string, groupId: string | null) => void;
@@ -832,12 +832,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     persistTabsSession(state.activeTabId, nextTabs, state.tabGroups);
   },
 
-  reorderTabs: (sourceTabId: string, targetTabId: string, position: 'before' | 'after' = 'before', adoptTargetGroup = false) => {
-    if (sourceTabId === targetTabId) return;
+  reorderTabs: (sourceTabId: string, targetTabId: string, position: 'before' | 'after' = 'before', adoptTargetGroup: boolean | 'ungroup' = false) => {
     const state = get();
     const sourceTab = state.tabs.find((t) => t.id === sourceTabId);
     const targetTab = state.tabs.find((t) => t.id === targetTabId);
     if (!sourceTab || !targetTab) return;
+
+    if (sourceTabId === targetTabId) {
+      if (adoptTargetGroup === 'ungroup' && sourceTab.groupId) {
+        const updatedTabs = state.tabs.map((t) =>
+          t.id === sourceTabId ? { ...t, groupId: null } : t
+        );
+        const nextTabs = normalizeGroupContiguity(updatedTabs);
+        const nextGroups = pruneOrphanGroups(nextTabs, state.tabGroups);
+        set({ tabs: nextTabs, tabGroups: nextGroups });
+        persistTabsSession(state.activeTabId, nextTabs, nextGroups);
+      }
+      return;
+    }
 
     const withoutSource = state.tabs.filter((t) => t.id !== sourceTabId);
     const targetIdx = withoutSource.findIndex((t) => t.id === targetTabId);
@@ -846,7 +858,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const insertIndex = position === 'after' ? targetIdx + 1 : targetIdx;
 
     let nextGroupId: string | null = sourceTab.groupId ?? null;
-    if (adoptTargetGroup) {
+    if (adoptTargetGroup === 'ungroup') {
+      nextGroupId = null;
+    } else if (adoptTargetGroup) {
       nextGroupId = targetTab.groupId ?? null;
     } else if (sourceTab.groupId !== targetTab.groupId) {
       if (sourceTab.groupId) {

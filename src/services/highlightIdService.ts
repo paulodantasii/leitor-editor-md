@@ -10,6 +10,9 @@
  *   IDs sequenciais V2 (5+ caracteres) têm prioridade cronológica estrita sobre IDs V1.
  */
 
+import { TextSelection } from '@tiptap/pm/state';
+import { HighlightColor } from '../types';
+
 export const SEQUENTIAL_ID_MIN_LENGTH = 5;
 const SEQUENTIAL_ID_REGEX = /^[0-9a-z]{5,}$/;
 const DEFAULT_SCOPE_KEY = '__default_doc__';
@@ -219,6 +222,232 @@ export function generateNextHighlightId(docOrMarkdown?: any, scopeKey?: string |
 
   highWaterMarkByScope = new Map([...highWaterMarkByScope, [resolvedScope, nextCounter]]);
   return formatSequentialHighlightId(nextCounter);
+}
+
+export interface HighlightRange {
+  readonly from: number;
+  readonly to: number;
+}
+
+export interface ApplyHighlightOptions {
+  readonly from?: number;
+  readonly to?: number;
+  readonly color?: HighlightColor;
+  readonly id?: string | null;
+  readonly scopeKey?: string | null;
+  readonly collapseToEnd?: boolean;
+}
+
+export interface ApplyHighlightResult {
+  readonly tr: any;
+  readonly range: HighlightRange;
+  readonly id: string;
+  readonly removedIds: ReadonlyArray<string>;
+}
+
+/**
+ * Recua as extremidades de um intervalo [from, to] no documento ProseMirror para excluir
+ * caracteres de espaço em branco no início e no final da seleção.
+ * Retorna `null` se o intervalo for vazio ou contiver apenas espaços em branco.
+ */
+export function resolveTrimmedHighlightRange(
+  doc: any,
+  from: number,
+  to: number
+): HighlightRange | null {
+  if (!doc || typeof doc.nodesBetween !== 'function') return null;
+
+  const docSize = typeof doc.content?.size === 'number' ? doc.content.size : to;
+  const safeFrom = Math.max(0, Math.min(from, docSize));
+  const safeTo = Math.max(0, Math.min(to, docSize));
+  if (safeFrom >= safeTo) return null;
+
+  let firstNonWsPos: number | null = null;
+  let lastNonWsEndPos: number | null = null;
+
+  doc.nodesBetween(safeFrom, safeTo, (node: any, pos: number) => {
+    if (!node?.isText || typeof node.text !== 'string') return;
+
+    const sliceFrom = Math.max(safeFrom, pos);
+    const sliceTo = Math.min(safeTo, pos + node.nodeSize);
+    if (sliceFrom >= sliceTo) return;
+
+    const startOffset = sliceFrom - pos;
+    const length = sliceTo - sliceFrom;
+
+    for (let i = 0; i < length; i++) {
+      const ch = node.text[startOffset + i];
+      if (!/\s/u.test(ch)) {
+        const charPos = sliceFrom + i;
+        if (firstNonWsPos === null) {
+          firstNonWsPos = charPos;
+        }
+        lastNonWsEndPos = charPos + 1;
+      }
+    }
+  });
+
+  if (firstNonWsPos === null || lastNonWsEndPos === null || firstNonWsPos >= lastNonWsEndPos) {
+    return null;
+  }
+
+  return { from: firstNonWsPos, to: lastNonWsEndPos };
+}
+
+function collectOverlappedHighlights(
+  doc: any,
+  from: number,
+  to: number
+): { overlappedIds: Set<string>; hasOverlappedIdlessMark: boolean } {
+  const overlappedIds = new Set<string>();
+  let hasOverlappedIdlessMark = false;
+
+  doc.nodesBetween(from, to, (node: any, pos: number) => {
+    if (!node?.isText || !Array.isArray(node.marks)) return;
+    if (pos + node.nodeSize <= from || pos >= to) return;
+
+    for (let i = 0; i < node.marks.length; i++) {
+      const mark = node.marks[i];
+      if (mark?.type?.name !== 'customHighlight') continue;
+
+      const rawId = typeof mark.attrs?.id === 'string' ? mark.attrs.id.trim() : '';
+      if (rawId) {
+        overlappedIds.add(rawId);
+      } else {
+        hasOverlappedIdlessMark = true;
+      }
+    }
+  });
+
+  return { overlappedIds, hasOverlappedIdlessMark };
+}
+
+function removeOverlappedHighlightsFromTr(
+  doc: any,
+  tr: any,
+  markType: any,
+  trimmed: HighlightRange,
+  overlappedIds: Set<string>,
+  hasOverlappedIdlessMark: boolean
+): void {
+  if (overlappedIds.size === 0 && !hasOverlappedIdlessMark) return;
+
+  const idRangesToRemove: HighlightRange[] = [];
+  const idlessRanges: HighlightRange[] = [];
+
+  doc.descendants((node: any, pos: number) => {
+    if (!node?.isText || !Array.isArray(node.marks)) return;
+
+    let matchesOverlappedId = false;
+    let hasIdlessHighlight = false;
+
+    for (let i = 0; i < node.marks.length; i++) {
+      const mark = node.marks[i];
+      if (mark?.type?.name !== 'customHighlight') continue;
+
+      const rawId = typeof mark.attrs?.id === 'string' ? mark.attrs.id.trim() : '';
+      if (rawId) {
+        if (overlappedIds.has(rawId)) {
+          matchesOverlappedId = true;
+        }
+      } else if (hasOverlappedIdlessMark) {
+        hasIdlessHighlight = true;
+      }
+    }
+
+    if (matchesOverlappedId) {
+      idRangesToRemove.push({ from: pos, to: pos + node.nodeSize });
+    } else if (hasIdlessHighlight) {
+      idlessRanges.push({ from: pos, to: pos + node.nodeSize });
+    }
+  });
+
+  for (let i = 0; i < idRangesToRemove.length; i++) {
+    tr.removeMark(idRangesToRemove[i].from, idRangesToRemove[i].to, markType);
+  }
+
+  if (idlessRanges.length > 0) {
+    const mergedSpans: HighlightRange[] = [];
+    for (let i = 0; i < idlessRanges.length; i++) {
+      const current = idlessRanges[i];
+      const last = mergedSpans[mergedSpans.length - 1];
+      if (last && last.to === current.from) {
+        mergedSpans[mergedSpans.length - 1] = { from: last.from, to: current.to };
+      } else {
+        mergedSpans.push(current);
+      }
+    }
+
+    for (let i = 0; i < mergedSpans.length; i++) {
+      const span = mergedSpans[i];
+      if (span.from < trimmed.to && span.to > trimmed.from) {
+        tr.removeMark(span.from, span.to, markType);
+      }
+    }
+  }
+}
+
+/**
+ * Cria uma transação ProseMirror única para aplicar um grifo sobre o intervalo selecionado:
+ * 1) Recua espaços em branco no início e no final da seleção;
+ * 2) Remove integralmente quaisquer grifos antigos que tenham interseção com o intervalo útil;
+ * 3) Aplica um único novo grifo estritamente no intervalo ajustado.
+ */
+export function createHighlightTransaction(
+  state: any,
+  options?: ApplyHighlightOptions
+): ApplyHighlightResult | null {
+  const rawFrom = options?.from ?? state?.selection?.from;
+  const rawTo = options?.to ?? state?.selection?.to;
+  if (!state?.doc || typeof rawFrom !== 'number' || typeof rawTo !== 'number') {
+    return null;
+  }
+
+  const trimmed = resolveTrimmedHighlightRange(
+    state.doc,
+    Math.min(rawFrom, rawTo),
+    Math.max(rawFrom, rawTo)
+  );
+  if (!trimmed) return null;
+
+  const markType = state.schema?.marks?.customHighlight;
+  if (!markType) return null;
+
+  const { overlappedIds, hasOverlappedIdlessMark } = collectOverlappedHighlights(
+    state.doc,
+    trimmed.from,
+    trimmed.to
+  );
+
+  const tr = state.tr;
+  removeOverlappedHighlightsFromTr(
+    state.doc,
+    tr,
+    markType,
+    trimmed,
+    overlappedIds,
+    hasOverlappedIdlessMark
+  );
+
+  const resolvedId =
+    options?.id && options.id.trim()
+      ? options.id.trim()
+      : generateNextHighlightId(state.doc, options?.scopeKey);
+  const resolvedColor: HighlightColor = options?.color || 'yellow';
+
+  tr.addMark(trimmed.from, trimmed.to, markType.create({ color: resolvedColor, id: resolvedId }));
+
+  if (options?.collapseToEnd) {
+    const safePos = Math.min(trimmed.to, tr.doc.content.size);
+    tr.setSelection(TextSelection.create(tr.doc, safePos));
+  }
+
+  return {
+    tr,
+    range: trimmed,
+    id: resolvedId,
+    removedIds: Array.from(overlappedIds),
+  };
 }
 
 /**

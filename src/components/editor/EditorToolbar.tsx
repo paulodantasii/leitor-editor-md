@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useReducer } from 'react';
 import { createPortal } from 'react-dom';
 import { Editor } from '@tiptap/react';
-import { generateNextHighlightId } from '../../services/highlightIdService';
+import { createHighlightTransaction } from '../../services/highlightIdService';
 import {
   TextCaseMode,
   createCaseTransformTransaction,
@@ -362,23 +362,16 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
       if (modified) {
         editor.view.dispatch(tr);
       }
-    } else {
-      let allSameExistingId = Boolean(existingId);
-      if (existingId && from !== to) {
-        editor.state.doc.nodesBetween(from, to, (node) => {
-          if (!node.isText) return;
-          const hasSameMark = node.marks.some(
-            (m) => m.type.name === 'customHighlight' && m.attrs.id === existingId
-          );
-          if (!hasSameMark) {
-            allSameExistingId = false;
-          }
-        });
+    } else if (from !== to) {
+      const result = createHighlightTransaction(editor.state, {
+        color,
+        scopeKey: docId,
+        collapseToEnd: false,
+      });
+      if (result) {
+        editor.view.dispatch(result.tr);
+        editor.view.focus();
       }
-      const targetId = allSameExistingId && existingId
-        ? existingId
-        : generateNextHighlightId(editor.state.doc, docId);
-      editor.chain().focus().setCustomHighlight({ color, id: targetId }).run();
     }
     setIsHighlightMenuOpen(false);
   };

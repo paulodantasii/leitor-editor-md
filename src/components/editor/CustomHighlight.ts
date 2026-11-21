@@ -1,6 +1,6 @@
 import { Mark, mergeAttributes } from '@tiptap/core';
 import { HighlightColor } from '../../types';
-import { generateNextHighlightId } from '../../services/highlightIdService';
+import { generateNextHighlightId, createHighlightTransaction } from '../../services/highlightIdService';
 
 export interface CustomHighlightOptions {
   multicolor: boolean;
@@ -102,13 +102,16 @@ export const CustomHighlight = Mark.create<CustomHighlightOptions>({
     return {
       setCustomHighlight:
         (attributes) =>
-        ({ commands, state }) => {
-          const id = attributes?.id ? attributes.id : generateNextHighlightId(state.doc);
-          const attrs = {
-            id,
+        ({ state, dispatch }) => {
+          const result = createHighlightTransaction(state, {
             color: attributes?.color || 'yellow',
-          };
-          return commands.setMark(this.name, attrs);
+            id: attributes?.id,
+          });
+          if (!result) return false;
+          if (dispatch) {
+            dispatch(result.tr);
+          }
+          return true;
         },
       toggleCustomHighlight:
         (attributes) =>

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../store/useAppStore';
 import { TabItem, TabGroup, HighlightColor } from '../../types';
@@ -23,7 +23,177 @@ type TabRenderSegment =
   | { type: 'single'; tab: TabItem }
   | { type: 'group'; group: TabGroup; tabs: TabItem[] };
 
-type DropZonePosition = 'before' | 'group' | 'after';
+export type DropZonePosition = 'before' | 'group' | 'after';
+
+export type TabDragSource = { type: 'tab'; id: string } | { type: 'group'; id: string };
+
+export type HorizontalRect = { left: number; right: number; width: number };
+
+export type RenderedTabRect = {
+  tab: TabItem;
+  rect: HorizontalRect;
+};
+
+export type RenderedSegmentRect = {
+  type: 'single' | 'group';
+  groupId?: string;
+  collapsed?: boolean;
+  rect: HorizontalRect;
+  chipRect?: HorizontalRect | null;
+  firstTab: TabItem;
+  lastTab: TabItem;
+  tabs: TabItem[];
+};
+
+export type ResolvedTabBarDropTarget =
+  | {
+      kind: 'tab';
+      targetTabId: string;
+      position: DropZonePosition;
+      outsideGroup: boolean;
+    }
+  | {
+      kind: 'group-chip';
+      groupId: string;
+    }
+  | null;
+
+export function computeTabDropZone(
+  clientX: number,
+  rect: HorizontalRect,
+  source: TabDragSource | null,
+  targetTab: TabItem,
+  allTabs: TabItem[]
+): DropZonePosition {
+  const ratio = (clientX - rect.left) / Math.max(rect.width, 1);
+
+  // Only allow 'group' center drop when dragging a different tab
+  const canDropToGroup =
+    source?.type === 'tab' &&
+    source.id !== targetTab.id &&
+    !(targetTab.groupId && allTabs.find((t) => t.id === source.id)?.groupId === targetTab.groupId);
+
+  if (canDropToGroup && ratio >= 0.28 && ratio <= 0.72) {
+    return 'group';
+  }
+  return ratio < 0.5 ? 'before' : 'after';
+}
+
+export function resolveTabBarDropTarget(params: {
+  clientX: number;
+  source: TabDragSource | null;
+  tabs: TabItem[];
+  tabRects: RenderedTabRect[];
+  segmentRects: RenderedSegmentRect[];
+}): ResolvedTabBarDropTarget {
+  const { clientX, source, tabs, tabRects, segmentRects } = params;
+  if (!source || tabs.length === 0 || segmentRects.length === 0) return null;
+
+  // 1. Verificação de impacto direto em chip de grupo
+  for (const seg of segmentRects) {
+    if (
+      seg.type === 'group' &&
+      seg.groupId &&
+      seg.chipRect &&
+      clientX >= seg.chipRect.left &&
+      clientX <= seg.chipRect.right
+    ) {
+      if (source.type === 'group' && source.id === seg.groupId) {
+        return null;
+      }
+      return { kind: 'group-chip', groupId: seg.groupId };
+    }
+  }
+
+  // 2. Verificação de impacto direto em uma aba renderizada
+  for (const tr of tabRects) {
+    if (clientX > tr.rect.left && clientX < tr.rect.right) {
+      return {
+        kind: 'tab',
+        targetTabId: tr.tab.id,
+        position: computeTabDropZone(clientX, tr.rect, source, tr.tab, tabs),
+        outsideGroup: false,
+      };
+    }
+  }
+
+  // 3. Verificação de vão interno dentro de um grupo
+  for (const seg of segmentRects) {
+    if (seg.type === 'group' && clientX > seg.rect.left && clientX < seg.rect.right) {
+      const groupTabRects = tabRects.filter((tr) => tr.tab.groupId === seg.groupId);
+      if (groupTabRects.length > 0) {
+        if (clientX <= groupTabRects[0].rect.left) {
+          return {
+            kind: 'tab',
+            targetTabId: groupTabRects[0].tab.id,
+            position: 'before',
+            outsideGroup: false,
+          };
+        }
+
+        const lastGroupTab = groupTabRects[groupTabRects.length - 1];
+        if (clientX >= lastGroupTab.rect.right) {
+          return {
+            kind: 'tab',
+            targetTabId: lastGroupTab.tab.id,
+            position: 'after',
+            outsideGroup: false,
+          };
+        }
+
+        for (let i = 0; i < groupTabRects.length - 1; i++) {
+          const cur = groupTabRects[i];
+          const nxt = groupTabRects[i + 1];
+          if (clientX >= cur.rect.right && clientX <= nxt.rect.left) {
+            const midpoint = (cur.rect.right + nxt.rect.left) / 2;
+            return clientX <= midpoint
+              ? { kind: 'tab', targetTabId: cur.tab.id, position: 'after', outsideGroup: false }
+              : { kind: 'tab', targetTabId: nxt.tab.id, position: 'before', outsideGroup: false };
+          }
+        }
+      }
+
+      const center = (seg.rect.left + seg.rect.right) / 2;
+      return clientX < center
+        ? { kind: 'tab', targetTabId: seg.firstTab.id, position: 'before', outsideGroup: true }
+        : { kind: 'tab', targetTabId: seg.lastTab.id, position: 'after', outsideGroup: true };
+    }
+  }
+
+  // 4. Posições antes do 1º segmento, depois do último segmento e vãos externos
+  const firstSegment = segmentRects[0];
+  if (clientX <= firstSegment.rect.left) {
+    return {
+      kind: 'tab',
+      targetTabId: firstSegment.firstTab.id,
+      position: 'before',
+      outsideGroup: true,
+    };
+  }
+
+  const lastSegment = segmentRects[segmentRects.length - 1];
+  if (clientX >= lastSegment.rect.right) {
+    return {
+      kind: 'tab',
+      targetTabId: lastSegment.lastTab.id,
+      position: 'after',
+      outsideGroup: true,
+    };
+  }
+
+  for (let i = 0; i < segmentRects.length - 1; i++) {
+    const cur = segmentRects[i];
+    const nxt = segmentRects[i + 1];
+    if (clientX >= cur.rect.right && clientX <= nxt.rect.left) {
+      const midpoint = (cur.rect.right + nxt.rect.left) / 2;
+      return clientX <= midpoint
+        ? { kind: 'tab', targetTabId: cur.lastTab.id, position: 'after', outsideGroup: true }
+        : { kind: 'tab', targetTabId: nxt.firstTab.id, position: 'before', outsideGroup: true };
+    }
+  }
+
+  return null;
+}
 
 export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) => {
   const {
@@ -78,14 +248,15 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
   const popoverContainerRef = useRef<HTMLDivElement>(null);
 
   // Drag & Drop State (shared by Mouse HTML5 DnD and iPad Touch Drag)
-  const [dragSource, setDragSource] = useState<
-    { type: 'tab'; id: string } | { type: 'group'; id: string } | null
-  >(null);
+  const [dragSource, setDragSource] = useState<TabDragSource | null>(null);
+  const dragSourceRef = useRef<TabDragSource | null>(null);
   const [dropIndicator, setDropIndicator] = useState<{
     targetTabId: string;
     position: DropZonePosition;
+    outsideGroup?: boolean;
   } | null>(null);
   const [chipDropTargetGroupId, setChipDropTargetGroupId] = useState<string | null>(null);
+  const tabBarContainerRef = useRef<HTMLDivElement>(null);
 
   // Touch drag refs for iPad
   const touchHoldTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -218,34 +389,161 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
     }
   };
 
-  // Compute drop zone ('before' | 'group' | 'after') from pointer X inside a tab element
-  const computeTabDropZone = (
-    clientX: number,
-    rect: DOMRect,
-    source: { type: 'tab'; id: string } | { type: 'group'; id: string } | null,
-    targetTab: TabItem
-  ): DropZonePosition => {
-    const ratio = (clientX - rect.left) / Math.max(rect.width, 1);
+  // Build contiguous render segments
+  const segments = useMemo<TabRenderSegment[]>(() => {
+    const result: TabRenderSegment[] = [];
+    const groupMap = new Map(tabGroups.map((g) => [g.id, g]));
+    let currentGroupSegment: { type: 'group'; group: TabGroup; tabs: TabItem[] } | null = null;
 
-    // Only allow 'group' center drop when dragging a different tab
-    const canDropToGroup =
-      source?.type === 'tab' &&
-      source.id !== targetTab.id &&
-      !(targetTab.groupId && tabs.find((t) => t.id === source.id)?.groupId === targetTab.groupId);
-
-    if (canDropToGroup && ratio >= 0.28 && ratio <= 0.72) {
-      return 'group';
+    for (const tab of tabs) {
+      if (tab.groupId && groupMap.has(tab.groupId)) {
+        const group = groupMap.get(tab.groupId)!;
+        if (currentGroupSegment && currentGroupSegment.group.id === tab.groupId) {
+          currentGroupSegment.tabs.push(tab);
+        } else {
+          if (currentGroupSegment) result.push(currentGroupSegment);
+          currentGroupSegment = { type: 'group', group, tabs: [tab] };
+        }
+      } else {
+        if (currentGroupSegment) {
+          result.push(currentGroupSegment);
+          currentGroupSegment = null;
+        }
+        result.push({ type: 'single', tab });
+      }
     }
-    return ratio < 0.5 ? 'before' : 'after';
-  };
+    if (currentGroupSegment) result.push(currentGroupSegment);
+    return result;
+  }, [tabs, tabGroups]);
+
+  const findTabElementById = useCallback((tabId: string): HTMLElement | null => {
+    const root = tabBarContainerRef.current ?? document;
+    const elements = root.querySelectorAll<HTMLElement>('[data-tab-id]');
+    for (const el of elements) {
+      if (el.getAttribute('data-tab-id') === tabId) return el;
+    }
+    return null;
+  }, []);
+
+  const clearDragState = useCallback(() => {
+    dragSourceRef.current = null;
+    setDragSource(null);
+    setDropIndicator(null);
+    setChipDropTargetGroupId(null);
+  }, []);
+
+  const resolveDropTargetAtClientX = useCallback(
+    (clientX: number, currentSource: TabDragSource | null): ResolvedTabBarDropTarget => {
+      const containerEl = tabBarContainerRef.current;
+      if (!containerEl || !currentSource || segments.length === 0) return null;
+
+      const toHorizontalRect = (r: DOMRect): HorizontalRect => ({
+        left: r.left,
+        right: r.right,
+        width: r.width,
+      });
+
+      const tabElMap = new Map<string, HorizontalRect>();
+      containerEl.querySelectorAll<HTMLElement>('[data-tab-id]').forEach((el) => {
+        const id = el.getAttribute('data-tab-id');
+        if (id) tabElMap.set(id, toHorizontalRect(el.getBoundingClientRect()));
+      });
+
+      const tabRects: RenderedTabRect[] = [];
+      for (const tab of tabs) {
+        const rect = tabElMap.get(tab.id);
+        if (rect) tabRects.push({ tab, rect });
+      }
+
+      const groupContainerMap = new Map<string, HorizontalRect>();
+      containerEl.querySelectorAll<HTMLElement>('[data-group-container-id]').forEach((el) => {
+        const id = el.getAttribute('data-group-container-id');
+        if (id) groupContainerMap.set(id, toHorizontalRect(el.getBoundingClientRect()));
+      });
+
+      const groupChipMap = new Map<string, HorizontalRect>();
+      containerEl.querySelectorAll<HTMLElement>('[data-group-chip-id]').forEach((el) => {
+        const id = el.getAttribute('data-group-chip-id');
+        if (id) groupChipMap.set(id, toHorizontalRect(el.getBoundingClientRect()));
+      });
+
+      const segmentRects: RenderedSegmentRect[] = [];
+      for (const segment of segments) {
+        if (segment.type === 'single') {
+          const rect = tabElMap.get(segment.tab.id);
+          if (rect) {
+            segmentRects.push({
+              type: 'single',
+              rect,
+              firstTab: segment.tab,
+              lastTab: segment.tab,
+              tabs: [segment.tab],
+            });
+          }
+        } else if (segment.tabs.length > 0) {
+          const rect = groupContainerMap.get(segment.group.id);
+          if (rect) {
+            segmentRects.push({
+              type: 'group',
+              groupId: segment.group.id,
+              collapsed: Boolean(segment.group.collapsed),
+              rect,
+              chipRect: groupChipMap.get(segment.group.id) ?? null,
+              firstTab: segment.tabs[0],
+              lastTab: segment.tabs[segment.tabs.length - 1],
+              tabs: segment.tabs,
+            });
+          }
+        }
+      }
+
+      return resolveTabBarDropTarget({
+        clientX,
+        source: currentSource,
+        tabs,
+        tabRects,
+        segmentRects,
+      });
+    },
+    [segments, tabs]
+  );
+
+  const applyResolvedDropTarget = useCallback((resolved: ResolvedTabBarDropTarget) => {
+    if (!resolved) {
+      setChipDropTargetGroupId(null);
+      setDropIndicator(null);
+      return;
+    }
+
+    if (resolved.kind === 'group-chip') {
+      setChipDropTargetGroupId(resolved.groupId);
+      setDropIndicator(null);
+      return;
+    }
+
+    setChipDropTargetGroupId(null);
+    setDropIndicator((prev) =>
+      prev &&
+      prev.targetTabId === resolved.targetTabId &&
+      prev.position === resolved.position &&
+      Boolean(prev.outsideGroup) === resolved.outsideGroup
+        ? prev
+        : {
+            targetTabId: resolved.targetTabId,
+            position: resolved.position,
+            outsideGroup: resolved.outsideGroup,
+          }
+    );
+  }, []);
 
   // Execute drop on a target tab
   const executeDropOnTab = useCallback(
     (
-      source: { type: 'tab'; id: string } | { type: 'group'; id: string },
+      source: TabDragSource,
       targetTab: TabItem,
       position: DropZonePosition,
-      targetElement: HTMLElement | null
+      targetElement: HTMLElement | null,
+      outsideGroup = false
     ) => {
       if (source.type === 'group') {
         const edgePos = position === 'after' ? 'after' : 'before';
@@ -253,7 +551,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
         return;
       }
 
-      if (source.id === targetTab.id) return;
+      if (source.id === targetTab.id && !outsideGroup) return;
 
       if (position === 'group') {
         if (targetTab.groupId) {
@@ -275,15 +573,15 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
         return;
       }
 
-      // Edge reorder ('before' | 'after'): adopt targetTab's group membership (so dragging inside a group joins it, dragging outside leaves it)
-      reorderTabs(source.id, targetTab.id, position, true);
+      // Edge reorder ('before' | 'after'): adopt targetTab's group membership when inside, or ungroup when dropped outside
+      reorderTabs(source.id, targetTab.id, position, outsideGroup ? 'ungroup' : true);
     },
     [createTabGroup, moveTabGroup, openGroupColorPopoverAtElement, reorderTabs, updateTabGroup]
   );
 
   // Execute drop on a group header chip
   const executeDropOnGroupChip = useCallback(
-    (source: { type: 'tab'; id: string } | { type: 'group'; id: string }, group: TabGroup) => {
+    (source: TabDragSource, group: TabGroup) => {
       if (source.type === 'tab') {
         assignTabToGroup(source.id, group.id);
         updateTabGroup(group.id, { collapsed: false });
@@ -297,10 +595,79 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
     [assignTabToGroup, moveTabGroup, tabs, updateTabGroup]
   );
 
+  // Unified HTML5 Drag Handlers on the TabBar horizontal strip
+  const handleContainerDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    const activeSource = dragSourceRef.current || dragSource;
+    if (!activeSource) return;
+    e.preventDefault();
+  };
+
+  const handleContainerDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    const activeSource = dragSourceRef.current || dragSource;
+    if (!activeSource) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    applyResolvedDropTarget(resolveDropTargetAtClientX(e.clientX, activeSource));
+  };
+
+  const handleContainerDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    const activeSource = dragSourceRef.current || dragSource;
+    if (!activeSource) return;
+
+    const related = e.relatedTarget as Node | null;
+    if (related && e.currentTarget.contains(related)) {
+      return;
+    }
+
+    // In WebKit/Safari, relatedTarget may be null during dragleave between child nodes.
+    if (e.clientX !== 0 || e.clientY !== 0) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom
+      ) {
+        return;
+      }
+    }
+
+    setDropIndicator(null);
+    setChipDropTargetGroupId(null);
+  };
+
+  const handleContainerDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const activeSource = dragSourceRef.current || dragSource;
+    if (!activeSource) return;
+    e.preventDefault();
+
+    const resolved = resolveDropTargetAtClientX(e.clientX, activeSource);
+    if (resolved?.kind === 'group-chip') {
+      const targetGroup = tabGroups.find((g) => g.id === resolved.groupId);
+      if (targetGroup) {
+        executeDropOnGroupChip(activeSource, targetGroup);
+      }
+    } else if (resolved?.kind === 'tab') {
+      const targetTab = tabs.find((t) => t.id === resolved.targetTabId);
+      const tabEl = findTabElementById(resolved.targetTabId);
+      if (targetTab) {
+        executeDropOnTab(
+          activeSource,
+          targetTab,
+          resolved.position,
+          tabEl,
+          resolved.outsideGroup
+        );
+      }
+    }
+
+    clearDragState();
+  };
+
   // iPad / Touch Drag Handlers
   const handleTouchStartItem = (
     e: React.TouchEvent,
-    source: { type: 'tab'; id: string } | { type: 'group'; id: string },
+    source: TabDragSource,
     isEditing: boolean
   ) => {
     if (isEditing) return;
@@ -313,6 +680,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
     if (touchHoldTimerRef.current) clearTimeout(touchHoldTimerRef.current);
     touchHoldTimerRef.current = setTimeout(() => {
       isTouchDraggingRef.current = true;
+      dragSourceRef.current = source;
       setDragSource(source);
     }, 180);
   };
@@ -335,33 +703,21 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
       return;
     }
 
-    if (!dragSource) return;
+    const activeSource = dragSourceRef.current || dragSource;
+    if (!activeSource) return;
     e.preventDefault();
 
-    const elUnderFinger = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;
-    if (!elUnderFinger) return;
-
-    const groupChipEl = elUnderFinger.closest('[data-group-chip-id]') as HTMLElement | null;
-    if (groupChipEl) {
-      const targetGroupId = groupChipEl.getAttribute('data-group-chip-id');
-      setChipDropTargetGroupId(targetGroupId);
-      setDropIndicator(null);
+    const containerRect = tabBarContainerRef.current?.getBoundingClientRect();
+    if (
+      containerRect &&
+      touch.clientY >= containerRect.top - 36 &&
+      touch.clientY <= containerRect.bottom + 36
+    ) {
+      applyResolvedDropTarget(resolveDropTargetAtClientX(touch.clientX, activeSource));
       return;
     }
 
     setChipDropTargetGroupId(null);
-    const tabEl = elUnderFinger.closest('[data-tab-id]') as HTMLElement | null;
-    if (tabEl) {
-      const targetTabId = tabEl.getAttribute('data-tab-id');
-      const targetTab = tabs.find((t) => t.id === targetTabId);
-      if (targetTab) {
-        const rect = tabEl.getBoundingClientRect();
-        const zone = computeTabDropZone(touch.clientX, rect, dragSource, targetTab);
-        setDropIndicator({ targetTabId: targetTab.id, position: zone });
-        return;
-      }
-    }
-
     setDropIndicator(null);
   };
 
@@ -371,61 +727,42 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
       touchHoldTimerRef.current = null;
     }
 
-    if (isTouchDraggingRef.current && dragSource) {
+    const activeSource = dragSourceRef.current || dragSource;
+    if (isTouchDraggingRef.current && activeSource) {
       if (chipDropTargetGroupId) {
         const targetGroup = tabGroups.find((g) => g.id === chipDropTargetGroupId);
         if (targetGroup) {
-          executeDropOnGroupChip(dragSource, targetGroup);
+          executeDropOnGroupChip(activeSource, targetGroup);
         }
       } else if (dropIndicator) {
         const targetTab = tabs.find((t) => t.id === dropIndicator.targetTabId);
-        const tabEl = document.querySelector(
-          `[data-tab-id="${dropIndicator.targetTabId}"]`
-        ) as HTMLElement | null;
+        const tabEl = findTabElementById(dropIndicator.targetTabId);
         if (targetTab) {
-          executeDropOnTab(dragSource, targetTab, dropIndicator.position, tabEl);
+          executeDropOnTab(
+            activeSource,
+            targetTab,
+            dropIndicator.position,
+            tabEl,
+            Boolean(dropIndicator.outsideGroup)
+          );
         }
       }
     }
 
     isTouchDraggingRef.current = false;
     touchStartCoordsRef.current = null;
-    setDragSource(null);
-    setDropIndicator(null);
-    setChipDropTargetGroupId(null);
+    clearDragState();
   };
-
-  // Build contiguous render segments
-  const segments: TabRenderSegment[] = [];
-  const groupMap = new Map(tabGroups.map((g) => [g.id, g]));
-  let currentGroupSegment: { type: 'group'; group: TabGroup; tabs: TabItem[] } | null = null;
-
-  for (const tab of tabs) {
-    if (tab.groupId && groupMap.has(tab.groupId)) {
-      const group = groupMap.get(tab.groupId)!;
-      if (currentGroupSegment && currentGroupSegment.group.id === tab.groupId) {
-        currentGroupSegment.tabs.push(tab);
-      } else {
-        if (currentGroupSegment) segments.push(currentGroupSegment);
-        currentGroupSegment = { type: 'group', group, tabs: [tab] };
-      }
-    } else {
-      if (currentGroupSegment) {
-        segments.push(currentGroupSegment);
-        currentGroupSegment = null;
-      }
-      segments.push({ type: 'single', tab });
-    }
-  }
-  if (currentGroupSegment) segments.push(currentGroupSegment);
 
   // Render a single tab item (used both standalone and inside a group)
   const renderTabPill = (tab: TabItem) => {
     const isActive = tab.id === activeTabId;
     const isEditing = editingTabId === tab.id;
     const isHome = isHomeTab(tab);
-    const isDropTarget = dropIndicator?.targetTabId === tab.id;
-    const dropPos = isDropTarget ? dropIndicator.position : null;
+    const isHiddenByGroupEdgeIndicator = Boolean(tab.groupId && dropIndicator?.outsideGroup);
+    const isDropTarget =
+      dropIndicator?.targetTabId === tab.id && !isHiddenByGroupEdgeIndicator;
+    const dropPos = isDropTarget ? dropIndicator?.position ?? null : null;
     const charLimits = isWide ? TAB_LABEL_MAX_CHARS.wide : TAB_LABEL_MAX_CHARS.narrow;
     const labelMaxChars = isActive ? charLimits.active : charLimits.inactive;
 
@@ -435,37 +772,13 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
         data-tab-id={tab.id}
         draggable={!isEditing}
         onDragStart={(e) => {
-          setDragSource({ type: 'tab', id: tab.id });
+          const source: TabDragSource = { type: 'tab', id: tab.id };
+          dragSourceRef.current = source;
+          setDragSource(source);
           e.dataTransfer.effectAllowed = 'move';
           e.dataTransfer.setData('text/plain', tab.id);
         }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          e.dataTransfer.dropEffect = 'move';
-          const rect = e.currentTarget.getBoundingClientRect();
-          const zone = computeTabDropZone(e.clientX, rect, dragSource, tab);
-          setDropIndicator({ targetTabId: tab.id, position: zone });
-        }}
-        onDragLeave={(e) => {
-          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-          if (dropIndicator?.targetTabId === tab.id) {
-            setDropIndicator(null);
-          }
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (dragSource && dropIndicator) {
-            executeDropOnTab(dragSource, tab, dropIndicator.position, e.currentTarget);
-          }
-          setDragSource(null);
-          setDropIndicator(null);
-        }}
-        onDragEnd={() => {
-          setDragSource(null);
-          setDropIndicator(null);
-        }}
+        onDragEnd={clearDragState}
         onTouchStart={(e) => handleTouchStartItem(e, { type: 'tab', id: tab.id }, isEditing)}
         onTouchMove={handleTouchMoveItem}
         onTouchEnd={handleTouchEndItem}
@@ -544,7 +857,14 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
 
   return (
     <div className="bg-slate-50/80 dark:bg-slate-950/40 border-b border-slate-200/80 dark:border-slate-800/80 header-safe-area transition-colors">
-      <div className="h-7 sm:h-8 flex items-center px-3 py-0.5">
+      <div
+        ref={tabBarContainerRef}
+        onDragEnter={handleContainerDragEnter}
+        onDragOver={handleContainerDragOver}
+        onDragLeave={handleContainerDragLeave}
+        onDrop={handleContainerDrop}
+        className="h-7 sm:h-8 flex items-center px-3 py-0.5"
+      >
         <div className="flex-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 max-w-7xl mx-auto w-full">
         {segments.map((segment) => {
           if (segment.type === 'single') {
@@ -560,11 +880,34 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
             ? groupTabs.filter((t) => t.id === activeTabId)
             : groupTabs;
 
+          const firstGroupTab = groupTabs[0];
+          const lastGroupTab = groupTabs[groupTabs.length - 1];
+          const isFirstGroupTabVisible = visibleTabs.some((t) => t.id === firstGroupTab?.id);
+          const isLastGroupTabVisible = visibleTabs.some((t) => t.id === lastGroupTab?.id);
+
+          const showGroupBeforeIndicator = Boolean(
+            dropIndicator &&
+              firstGroupTab &&
+              dropIndicator.targetTabId === firstGroupTab.id &&
+              dropIndicator.position === 'before' &&
+              (dropIndicator.outsideGroup || !isFirstGroupTabVisible)
+          );
+          const showGroupAfterIndicator = Boolean(
+            dropIndicator &&
+              lastGroupTab &&
+              dropIndicator.targetTabId === lastGroupTab.id &&
+              dropIndicator.position === 'after' &&
+              (dropIndicator.outsideGroup || !isLastGroupTabVisible)
+          );
+
           return (
             <div
               key={group.id}
+              data-group-container-id={group.id}
               className={`rounded-lg border-2 ${colorOption.borderClass} px-1 py-0.5 flex items-center gap-1 bg-white/50 dark:bg-slate-900/50 transition-all shrink-0 ${
                 chipDropTargetGroupId === group.id ? 'ring-2 ring-blue-500 bg-blue-50/30' : ''
+              } ${showGroupBeforeIndicator ? 'border-l-2 !border-l-blue-500' : ''} ${
+                showGroupAfterIndicator ? 'border-r-2 !border-r-blue-500' : ''
               }`}
             >
               {/* Clean Group Header Chip: [ ● Nome ] */}
@@ -572,35 +915,13 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
                 data-group-chip-id={group.id}
                 draggable={!isGroupEditing}
                 onDragStart={(e) => {
-                  setDragSource({ type: 'group', id: group.id });
+                  const source: TabDragSource = { type: 'group', id: group.id };
+                  dragSourceRef.current = source;
+                  setDragSource(source);
                   e.dataTransfer.effectAllowed = 'move';
                   e.dataTransfer.setData('text/plain', group.id);
                 }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setChipDropTargetGroupId(group.id);
-                }}
-                onDragLeave={() => {
-                  if (chipDropTargetGroupId === group.id) {
-                    setChipDropTargetGroupId(null);
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setChipDropTargetGroupId(null);
-                  if (dragSource) {
-                    executeDropOnGroupChip(dragSource, group);
-                  }
-                  setDragSource(null);
-                  setDropIndicator(null);
-                }}
-                onDragEnd={() => {
-                  setDragSource(null);
-                  setDropIndicator(null);
-                  setChipDropTargetGroupId(null);
-                }}
+                onDragEnd={clearDragState}
                 onTouchStart={(e) =>
                   handleTouchStartItem(e, { type: 'group', id: group.id }, isGroupEditing)
                 }
@@ -676,24 +997,10 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
           );
         })}
 
-        {/* New Tab (+) Button — also serves as drop target to pull a tab out of a group to the end */}
+        {/* New Tab (+) Button — drop area here is handled by the continuous TabBar strip */}
         <button
           type="button"
           onClick={onNewTab}
-          onDragOver={(e) => {
-            if (dragSource?.type === 'tab') {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-            }
-          }}
-          onDrop={(e) => {
-            if (dragSource?.type === 'tab') {
-              e.preventDefault();
-              assignTabToGroup(dragSource.id, null);
-              setDragSource(null);
-              setDropIndicator(null);
-            }
-          }}
           title="Nova aba (tela inicial)"
           className="w-6 h-6 rounded flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-purple-600 dark:hover:text-purple-400 transition-colors shrink-0 cursor-pointer ml-0.5"
         >

@@ -34,6 +34,7 @@ import {
 } from '../../services/editorContentBridge';
 import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
 import {
+  createHighlightTransaction,
   generateNextHighlightId,
   parseSequentialHighlightId,
   primeHighlightIdScope,
@@ -194,6 +195,7 @@ export const TiptapEditor: React.FC = () => {
   const isMouseDownRef = useRef(false);
   const isTouchSelectingRef = useRef(false);
   const lastClickedMarkPosRef = useRef<number | null>(null);
+  const justAppliedHighlightAtRef = useRef<number>(0);
   const cachedDomHeadingsRef = useRef<HTMLElement[]>([]);
   const warmUpCancelRef = useRef<(() => void) | null>(null);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -322,6 +324,73 @@ export const TiptapEditor: React.FC = () => {
     [updateHighlightCount]
   );
 
+  const resolveSelectionRange = useCallback(
+    (currentEditor: Editor, preferDomSelection: boolean): { from: number; to: number } => {
+      if (preferDomSelection && typeof window !== 'undefined') {
+        const domSel = window.getSelection();
+        if (
+          domSel &&
+          domSel.rangeCount > 0 &&
+          !domSel.isCollapsed &&
+          domSel.anchorNode &&
+          domSel.focusNode &&
+          currentEditor.view.dom.contains(domSel.anchorNode) &&
+          currentEditor.view.dom.contains(domSel.focusNode)
+        ) {
+          try {
+            const range = domSel.getRangeAt(0);
+            const posA = currentEditor.view.posAtDOM(range.startContainer, range.startOffset);
+            const posB = currentEditor.view.posAtDOM(range.endContainer, range.endOffset);
+            const docSize = currentEditor.state.doc.content.size;
+            const domFrom = Math.max(0, Math.min(posA, posB, docSize));
+            const domTo = Math.max(0, Math.min(Math.max(posA, posB), docSize));
+            if (domFrom !== domTo) {
+              return { from: domFrom, to: domTo };
+            }
+          } catch (err) {
+            console.debug('Failed to resolve DOM selection positions for highlight:', err);
+          }
+        }
+      }
+
+      const { from, to } = currentEditor.state.selection;
+      return { from, to };
+    },
+    []
+  );
+
+  const applyHighlightFromCurrentSelection = useCallback(
+    (currentEditor: Editor, preferDomSelection: boolean): boolean => {
+      if (!currentEditor || currentEditor.isDestroyed) return false;
+
+      const { from, to } = resolveSelectionRange(currentEditor, preferDomSelection);
+      if (from === to) return false;
+
+      const result = createHighlightTransaction(currentEditor.state, {
+        from,
+        to,
+        color: 'yellow',
+        scopeKey: useAppStore.getState().document?.docId,
+        collapseToEnd: true,
+      });
+
+      if (!result) {
+        const safePos = Math.min(Math.max(from, to), currentEditor.state.doc.content.size);
+        currentEditor.commands.setTextSelection(safePos);
+        window.getSelection()?.removeAllRanges();
+        return false;
+      }
+
+      justAppliedHighlightAtRef.current = Date.now();
+      setPopoverOpen(false);
+      currentEditor.view.dispatch(result.tr);
+      window.getSelection()?.removeAllRanges();
+      scheduleDebouncedHighlightCount(currentEditor);
+      return true;
+    },
+    [resolveSelectionRange, scheduleDebouncedHighlightCount, setPopoverOpen]
+  );
+
   // Initialize Tiptap Editor
   const editor = useEditor({
     extensions: [
@@ -416,23 +485,7 @@ export const TiptapEditor: React.FC = () => {
         }
 
         highlightTimeoutRef.current = setTimeout(() => {
-          const currentSel = currentEditor.state.selection;
-          if (currentSel.from !== currentSel.to) {
-            const uniqueId = generateNextHighlightId(
-              currentEditor.state.doc,
-              useAppStore.getState().document?.docId
-            );
-
-            setPopoverOpen(false);
-
-            currentEditor
-              .chain()
-              .setCustomHighlight({ color: 'yellow', id: uniqueId })
-              .setTextSelection(currentSel.to)
-              .run();
-
-            scheduleDebouncedHighlightCount(currentEditor);
-          }
+          applyHighlightFromCurrentSelection(currentEditor, false);
         }, 200);
       }
     },
@@ -1226,7 +1279,7 @@ export const TiptapEditor: React.FC = () => {
         return;
       }
 
-      const { from, to } = editor.state.selection;
+      const { from, to } = resolveSelectionRange(editor, true);
       if (from === to && target?.closest('mark')) {
         return;
       }
@@ -1236,20 +1289,7 @@ export const TiptapEditor: React.FC = () => {
           clearTimeout(highlightTimeoutRef.current);
         }
 
-        const uniqueId = generateNextHighlightId(
-          editor.state.doc,
-          useAppStore.getState().document?.docId
-        );
-
-        setPopoverOpen(false);
-
-        editor
-          .chain()
-          .setCustomHighlight({ color: 'yellow', id: uniqueId })
-          .setTextSelection(to)
-          .run();
-
-        scheduleDebouncedHighlightCount(editor);
+        applyHighlightFromCurrentSelection(editor, true);
       }
     };
 
@@ -1273,10 +1313,12 @@ export const TiptapEditor: React.FC = () => {
         container.removeEventListener('contextmenu', handleContextMenu);
       }
     };
-  }, [editor, isHighlightMode, isEditable, scheduleDebouncedHighlightCount, setPopoverOpen]);
+  }, [editor, isHighlightMode, isEditable, resolveSelectionRange, applyHighlightFromCurrentSelection]);
 
   // Ref to debounce touch and mouse events on mobile/iPad
   const lastPointerDownTimeRef = useRef(0);
+  const mouseDownXRef = useRef(0);
+  const mouseDownYRef = useRef(0);
   const touchStartXRef = useRef(0);
   const touchStartYRef = useRef(0);
 
@@ -1347,13 +1389,16 @@ export const TiptapEditor: React.FC = () => {
       }
     };
 
-    // Handler para MOUSE (desktop)
+    // Handler para MOUSE (desktop) - fase 1: registra coordenadas e fecha popover se clicar fora de <mark>
     const handleMouseDown = (e: MouseEvent) => {
       if (!editor || editor.isDestroyed || isEditable) return;
 
       const now = Date.now();
       // Guard: ignora mousedown sintético gerado logo após touchend (400ms)
       if (now - lastPointerDownTimeRef.current < 400) return;
+
+      mouseDownXRef.current = e.clientX;
+      mouseDownYRef.current = e.clientY;
 
       const target = e.target as HTMLElement;
       if (!target) return;
@@ -1362,12 +1407,39 @@ export const TiptapEditor: React.FC = () => {
 
       const markEl = target.closest('mark');
       if (markEl && containerRef.current?.contains(markEl)) {
-        if (openPopoverForMark(markEl, e.clientX, e.clientY)) return;
+        return;
       }
 
       if (isPopoverOpenRef.current) {
         setPopoverOpen(false);
         window.getSelection()?.removeAllRanges();
+      }
+    };
+
+    // Handler para MOUSE (desktop) - fase 2: abre popover apenas em clique simples (sem arraste/seleção)
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!editor || editor.isDestroyed || isEditable) return;
+
+      const now = Date.now();
+      if (now - lastPointerDownTimeRef.current < 400) return;
+      if (now - justAppliedHighlightAtRef.current < 250) return;
+
+      const deltaX = e.clientX - mouseDownXRef.current;
+      const deltaY = e.clientY - mouseDownYRef.current;
+      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+      if (distance > 5) return;
+
+      const domSel = typeof window !== 'undefined' ? window.getSelection() : null;
+      if (!editor.state.selection.empty || (domSel && !domSel.isCollapsed)) return;
+
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      if (target.closest('[data-highlight-popover]')) return;
+
+      const markEl = target.closest('mark');
+      if (markEl && containerRef.current?.contains(markEl)) {
+        openPopoverForMark(markEl, e.clientX, e.clientY);
       }
     };
 
@@ -1384,6 +1456,7 @@ export const TiptapEditor: React.FC = () => {
     // Handler TOUCH FASE 2: decide se foi tap válido com base em deslocamento e duração
     const handleTouchEnd = (e: TouchEvent) => {
       if (!editor || editor.isDestroyed || isEditable) return;
+      if (Date.now() - justAppliedHighlightAtRef.current < 250) return;
 
       const touch = e.changedTouches[0];
       if (!touch) return;
@@ -1397,6 +1470,9 @@ export const TiptapEditor: React.FC = () => {
       const TAP_MOVE_THRESHOLD = 10;
       const TAP_DURATION_MAX = 500;
       if (distance > TAP_MOVE_THRESHOLD || duration > TAP_DURATION_MAX) return;
+
+      const domSel = typeof window !== 'undefined' ? window.getSelection() : null;
+      if (!editor.state.selection.empty || (domSel && !domSel.isCollapsed)) return;
 
       const target = e.target as HTMLElement;
       if (!target) return;
@@ -1415,10 +1491,12 @@ export const TiptapEditor: React.FC = () => {
     };
 
     document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('touchstart', handleTouchStart, { passive: true });
     document.addEventListener('touchend', handleTouchEnd);
     return () => {
       document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('touchstart', handleTouchStart);
       document.removeEventListener('touchend', handleTouchEnd);
     };

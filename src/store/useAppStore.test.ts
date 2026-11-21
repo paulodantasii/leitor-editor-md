@@ -498,6 +498,35 @@ describe('Reordenação de Abas e Grupos de Abas com Cores', () => {
     expect(useAppStore.getState().tabs.find((t) => t.id === tab3)?.groupId).toBeNull();
     expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab3, tab1, tab2]);
   });
+
+  it("reorderTabs com adoptTargetGroup = 'ungroup' remove a aba do grupo nas extremidades (inclusive quando arrastada para fora da própria ponta)", () => {
+    const tab1 = useAppStore.getState().openTab({ title: '1.md', content: '1' });
+    const tab2 = useAppStore.getState().openTab({ title: '2.md', content: '2' });
+    const tab3 = useAppStore.getState().openTab({ title: '3.md', content: '3' });
+
+    const gId = useAppStore.getState().createTabGroup([tab1, tab2, tab3], {
+      title: 'Grupo Ponta',
+      color: 'green',
+    });
+    expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab1, tab2, tab3]);
+
+    // Puxa a última aba (tab3) para o espaço externo após ela mesma ('after' + 'ungroup')
+    useAppStore.getState().reorderTabs(tab3, tab3, 'after', 'ungroup');
+    expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab1, tab2, tab3]);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab3)?.groupId).toBeNull();
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab1)?.groupId).toBe(gId);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab2)?.groupId).toBe(gId);
+
+    // Puxa tab2 para o espaço externo depois de tab3 ('after' + 'ungroup')
+    useAppStore.getState().reorderTabs(tab2, tab3, 'after', 'ungroup');
+    expect(useAppStore.getState().tabs.map((t) => t.id)).toEqual([tab1, tab3, tab2]);
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab2)?.groupId).toBeNull();
+
+    // Puxa a única aba restante do grupo (tab1) para o espaço externo antes dela mesma ('before' + 'ungroup') -> poda grupo órfão
+    useAppStore.getState().reorderTabs(tab1, tab1, 'before', 'ungroup');
+    expect(useAppStore.getState().tabs.find((t) => t.id === tab1)?.groupId).toBeNull();
+    expect(useAppStore.getState().tabGroups).toHaveLength(0);
+  });
 });
 
 describe('Aba Início (Nova Aba)', () => {
