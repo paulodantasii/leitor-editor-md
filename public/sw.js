@@ -3,6 +3,8 @@ const ASSETS_TO_CACHE = [
   './manifest.json',
   './favicon.svg',
   './apple-touch-icon.png',
+  './icon-48.png',
+  './icon-96.png',
   './icon-192.png',
   './icon-512.png',
   './icon-maskable-512.png'

@@ -369,10 +369,22 @@ export const Header: React.FC = () => {
   return (
     <header
       ref={headerRef}
-      className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 header-safe-area transition-colors print:hidden shadow-xs"
+      className={`sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 ${
+        tabs.length === 0 ? 'header-safe-area' : ''
+      } transition-colors print:hidden shadow-xs`}
     >
-      {/* LINHA 1: Status de salvamento (esquerda) e ações (direita) */}
-      <div className="h-10 sm:h-11 px-2.5 sm:px-4 flex items-center justify-between gap-2 max-w-7xl mx-auto">
+      {/* LINHA 1: Barra de Abas no topo (estilo navegador) com Suporte a Drag & Drop e Grupos */}
+      {tabs.length > 0 && (
+        <TabBar
+          onRequestCloseTab={handleCloseTabClick}
+          onNewTab={() => {
+            openHomeTab();
+          }}
+        />
+      )}
+
+      {/* LINHA 2: Status de salvamento (esquerda) e ações (direita) */}
+      <div className="h-8 px-2.5 sm:px-4 flex items-center justify-between gap-2 max-w-7xl mx-auto">
         {/* Esquerda: Status de salvamento visível e discreto */}
         <div className="flex items-center justify-start min-w-0 overflow-hidden">
           {hasDocument && (
@@ -408,8 +420,8 @@ export const Header: React.FC = () => {
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   onClick={toggleHighlightMode}
-                  className={`px-2.5 sm:px-3 h-8 ${
-                    highlightCount > 0 ? 'rounded-l-xl rounded-r-md' : 'rounded-xl'
+                  className={`px-2.5 sm:px-3 h-[26px] ${
+                    highlightCount > 0 ? 'rounded-l-lg rounded-r-md' : 'rounded-lg'
                   } font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
                     isHighlightMode
                       ? 'bg-amber-500 text-white shadow-sm font-semibold'
@@ -417,10 +429,10 @@ export const Header: React.FC = () => {
                   }`}
                   title="Ativar/Desativar Modo Grifar (Atalho: tecla G)"
                 >
-                  <Highlighter className="w-4 h-4" />
+                  <Highlighter className="w-3.5 h-3.5" />
                   <span className="hidden md:inline">Grifar</span>
                   <span
-                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    className={`px-1.5 py-[1px] rounded-full text-[10px] leading-tight font-bold ${
                       isHighlightMode ? 'bg-amber-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                     }`}
                   >
@@ -434,13 +446,13 @@ export const Header: React.FC = () => {
                     onClick={requestScrollToLatestHighlight}
                     title="Ir para o grifo mais recente (Atalho: tecla J)"
                     aria-label="Ir para o grifo mais recente"
-                    className={`h-8 px-2 rounded-r-xl rounded-l-md flex items-center justify-center transition-all shrink-0 cursor-pointer ${
+                    className={`h-[26px] px-2 rounded-r-lg rounded-l-md flex items-center justify-center transition-all shrink-0 cursor-pointer ${
                       isHighlightMode
                         ? 'bg-amber-500/90 hover:bg-amber-600 text-white shadow-sm'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-100 dark:hover:bg-slate-700 hover:text-amber-700 dark:hover:text-amber-300'
                     }`}
                   >
-                    <LocateFixed className="w-3.5 h-3.5" />
+                    <LocateFixed className="w-3 h-3" />
                   </button>
                 )}
               </div>
@@ -449,19 +461,19 @@ export const Header: React.FC = () => {
               <div
                 role="group"
                 aria-label="Modo de visualização"
-                className="h-8 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex items-center shrink-0 shadow-inner"
+                className="h-[26px] p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200/80 dark:border-slate-700/80 flex items-center shrink-0 shadow-inner"
               >
                 <button
                   type="button"
                   onClick={() => setIsEditable(false)}
                   title="Modo Leitura (focado na leitura e grifos)"
-                  className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
+                  className={`h-[22px] px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
                     !isEditable
                       ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm font-semibold'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
                   }`}
                 >
-                  <BookOpen className={`w-3.5 h-3.5 ${!isEditable ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                  <BookOpen className={`w-3 h-3 ${!isEditable ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                   <span className="hidden sm:inline">Leitura</span>
                 </button>
 
@@ -469,13 +481,13 @@ export const Header: React.FC = () => {
                   type="button"
                   onClick={() => setIsEditable(true)}
                   title="Modo Edição (digitação e formatação Markdown)"
-                  className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
+                  className={`h-[22px] px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
                     isEditable
                       ? 'bg-blue-600 text-white shadow-sm font-semibold'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
                   }`}
                 >
-                  <Edit3 className={`w-3.5 h-3.5 ${isEditable ? 'text-white' : 'text-slate-400 dark:text-slate-500'}`} />
+                  <Edit3 className={`w-3 h-3 ${isEditable ? 'text-white' : 'text-slate-400 dark:text-slate-500'}`} />
                   <span className="hidden sm:inline">Edição</span>
                 </button>
               </div>
@@ -490,13 +502,13 @@ export const Header: React.FC = () => {
             <button
               onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
               title="Mais opções"
-              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
+              className={`w-8 h-[26px] rounded-lg flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
                 isMoreMenuOpen
                   ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
             >
-              <MoreVertical className="w-4 h-4" />
+              <MoreVertical className="w-3.5 h-3.5" />
             </button>
 
             {isMoreMenuOpen && (
@@ -567,16 +579,6 @@ export const Header: React.FC = () => {
           </div>
         </div>
       </div>
-
-      {/* LINHA 2: Barra de Abas com Suporte a Drag & Drop e Grupos */}
-      {tabs.length > 0 && (
-        <TabBar
-          onRequestCloseTab={handleCloseTabClick}
-          onNewTab={() => {
-            openHomeTab();
-          }}
-        />
-      )}
 
       {/* LINHA 3: Mapa / Breadcrumb de Localização Contextual por Títulos (H1 > H2 > H3) */}
       {hasDocument && <DocumentOutlineBar />}

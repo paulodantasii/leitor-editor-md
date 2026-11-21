@@ -9,7 +9,7 @@ export const HIGHLIGHT_COLORS: HighlightColorOption[] = [
   { id: 'green', name: 'Verde', bgClass: 'bg-emerald-200 hover:bg-emerald-300 dark:bg-emerald-300', borderClass: 'border-emerald-400', hex: '#bbf7d0' },
   { id: 'purple', name: 'Roxo', bgClass: 'bg-purple-200 hover:bg-purple-300 dark:bg-purple-300', borderClass: 'border-purple-400', hex: '#e9d5ff' },
   { id: 'orange', name: 'Laranja', bgClass: 'bg-orange-200 hover:bg-orange-300 dark:bg-orange-300', borderClass: 'border-orange-400', hex: '#fed7aa' },
-  { id: 'gray', name: 'Cinza', bgClass: 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-300', borderClass: 'border-slate-400', hex: '#cbd5e1' },
+  { id: 'gray', name: 'Cinza', bgClass: 'bg-slate-300 hover:bg-slate-400 dark:bg-slate-400', borderClass: 'border-slate-400', hex: '#cbd5e1' },
 ];
 
 export function getHighlightColorOption(color?: HighlightColor | null): HighlightColorOption {

@@ -543,8 +543,9 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
     : null;
 
   return (
-    <div className="h-7 sm:h-8 bg-slate-50/80 dark:bg-slate-950/40 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center px-3 py-0.5">
-      <div className="flex-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 max-w-7xl mx-auto w-full">
+    <div className="bg-slate-50/80 dark:bg-slate-950/40 border-b border-slate-200/80 dark:border-slate-800/80 header-safe-area transition-colors">
+      <div className="h-7 sm:h-8 flex items-center px-3 py-0.5">
+        <div className="flex-1 flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 max-w-7xl mx-auto w-full">
         {segments.map((segment) => {
           if (segment.type === 'single') {
             return renderTabPill(segment.tab);
@@ -698,6 +699,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
         >
           <Plus className="w-3.5 h-3.5" />
         </button>
+        </div>
       </div>
 
       {/* Reused HighlightPopover Pill for Group Color Selection & Ungrouping */}

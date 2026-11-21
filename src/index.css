@@ -144,7 +144,7 @@ mark.orange {
 }
 
 mark.gray {
-  background-color: #e2e8f0;
+  background-color: #cbd5e1;
 }
 
 /* Dark mode adjustment for pastel highlights */
@@ -184,7 +184,7 @@ mark.gray {
 }
 
 .dark mark.gray {
-  background-color: #475569;
+  background-color: #64748b;
   color: #f8fafc;
 }
 
@@ -324,7 +324,7 @@ html.scroll-restoring body {
 
 .ProseMirror blockquote {
   border-left: 4px solid #475569;
-  background-color: #f1f5f9;
+  background-color: #f8fafc;
   padding: 0.75em 1.25em;
   border-radius: 0 4px 4px 0;
   font-style: italic;
@@ -341,7 +341,7 @@ html.scroll-restoring body {
 .dark .ProseMirror blockquote {
   border-left-color: #94a3b8;
   background-color: #1e293b; /* Keeping it slightly dark but enough contrast */
-  background-color: rgba(255, 255, 255, 0.06); /* Better adaptive contrast */
+  background-color: rgba(255, 255, 255, 0.04); /* Better adaptive contrast */
   color: #e2e8f0;
 }
 
@@ -875,6 +875,6 @@ html.scroll-restoring body {
   }
 
   mark.gray {
-    background-color: #e2e8f0 !important;
+    background-color: #cbd5e1 !important;
   }
 }
