@@ -46,6 +46,24 @@ describe('tocService', () => {
         { level: 2, text: '2. União Estável' },
       ]);
     });
+
+    it('ignora linhas com # dentro da seção final de comentários dos grifos', () => {
+      const md = [
+        '# Capítulo Único',
+        'Texto com grifo.',
+        '',
+        '<!-- HIGHLIGHT_COMMENTS_START -->',
+        '---',
+        '**Comentários dos Grifos**',
+        '',
+        '- **[00001]**: # Isso NÃO deve virar título no sumário',
+        '  ## Subtítulo falso dentro do comentário',
+        '<!-- HIGHLIGHT_COMMENTS_END -->',
+      ].join('\n');
+
+      const headings = extractHeadingsFromMarkdown(md);
+      expect(headings.map((h) => h.text)).toEqual(['Capítulo Único']);
+    });
   });
 
   describe('computeBreadcrumbTrail', () => {

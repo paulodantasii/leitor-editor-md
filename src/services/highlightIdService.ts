@@ -451,6 +451,94 @@ export function createHighlightTransaction(
 }
 
 /**
+ * Garante que um grifo existente na posição `pos` possua um `data-id` válido.
+ * Caso seja um grifo legado sem ID, atribui um novo ID sequencial ao trecho contíguo
+ * para que um comentário possa ser vinculado a ele.
+ */
+export function ensureHighlightIdAtPos(
+  state: any,
+  pos: number,
+  scopeKey?: string | null
+): { tr: any | null; id: string } | null {
+  const doc = state?.doc;
+  const markType = state?.schema?.marks?.customHighlight;
+  if (!doc || !markType || typeof doc.descendants !== 'function') return null;
+
+  const docSize = typeof doc.content?.size === 'number' ? doc.content.size : 0;
+  const safePos = Math.max(0, Math.min(pos, docSize));
+
+  const idlessRuns: Array<{ from: number; to: number; color: HighlightColor }> = [];
+  let existingIdAtPos: string | null = null;
+
+  doc.descendants((node: any, nodePos: number) => {
+    if (!node?.isText || !Array.isArray(node.marks)) return;
+    const nodeEnd = nodePos + node.nodeSize;
+
+    for (let i = 0; i < node.marks.length; i++) {
+      const mark = node.marks[i];
+      if (mark?.type?.name !== 'customHighlight') continue;
+
+      const rawId = typeof mark.attrs?.id === 'string' ? mark.attrs.id.trim() : '';
+      if (rawId) {
+        if (nodePos <= safePos && nodeEnd >= safePos) {
+          existingIdAtPos = rawId;
+        }
+      } else {
+        idlessRuns.push({
+          from: nodePos,
+          to: nodeEnd,
+          color: (mark.attrs?.color as HighlightColor) || 'yellow',
+        });
+      }
+    }
+  });
+
+  if (existingIdAtPos) {
+    return { tr: null, id: existingIdAtPos };
+  }
+
+  if (idlessRuns.length === 0) return null;
+
+  const mergedSpans: Array<{
+    from: number;
+    to: number;
+    segments: Array<{ from: number; to: number; color: HighlightColor }>;
+  }> = [];
+
+  for (let i = 0; i < idlessRuns.length; i++) {
+    const run = idlessRuns[i];
+    const last = mergedSpans[mergedSpans.length - 1];
+    if (last && last.to === run.from) {
+      last.to = run.to;
+      last.segments.push(run);
+    } else {
+      mergedSpans.push({
+        from: run.from,
+        to: run.to,
+        segments: [run],
+      });
+    }
+  }
+
+  const targetSpan =
+    mergedSpans.find((s) => s.from < safePos && s.to > safePos) ||
+    mergedSpans.find((s) => s.from <= safePos && s.to >= safePos);
+
+  if (!targetSpan) return null;
+
+  const newId = generateNextHighlightId(doc, scopeKey);
+  const tr = state.tr;
+
+  for (let i = 0; i < targetSpan.segments.length; i++) {
+    const seg = targetSpan.segments[i];
+    tr.removeMark(seg.from, seg.to, markType);
+    tr.addMark(seg.from, seg.to, markType.create({ color: seg.color, id: newId }));
+  }
+
+  return { tr, id: newId };
+}
+
+/**
  * Localiza o grifo mais recente atualmente vivo na árvore do ProseMirror.
  * Prioriza o maior ID sequencial V2; se não houver nenhum, retorna o último grifo legado do documento.
  */

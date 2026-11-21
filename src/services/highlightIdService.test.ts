@@ -12,6 +12,7 @@ import {
   resetHighlightIdMemory,
   resolveTrimmedHighlightRange,
   createHighlightTransaction,
+  ensureHighlightIdAtPos,
 } from './highlightIdService';
 
 const testSchema = new Schema({
@@ -429,5 +430,37 @@ describe('createHighlightTransaction & resolveTrimmedHighlightRange', () => {
       { text: 'legado', color: 'yellow', id: '00001', isBold: true },
       { text: 'outro isolado', color: 'yellow', id: null, isBold: false },
     ]);
+  });
+
+  it('ensureHighlightIdAtPos atribui um ID sequencial a grifo legado sem ID e preserva ID já existente', () => {
+    const legacyNoIdMark = testSchema.marks.customHighlight.create({ color: 'blue', id: null });
+    const existingMark = testSchema.marks.customHighlight.create({ color: 'yellow', id: '00004' });
+    const boldMark = testSchema.marks.bold.create();
+    const doc = testSchema.node('doc', null, [
+      testSchema.node('paragraph', null, [
+        testSchema.text('Início ', [legacyNoIdMark]),
+        testSchema.text('negrito', [legacyNoIdMark, boldMark]),
+        testSchema.text(' e '),
+        testSchema.text('existente', [existingMark]),
+      ]),
+    ]);
+
+    const state = EditorState.create({ doc });
+    // Posição 10 cai dentro de "negrito" (do grifo legado sem ID)
+    const assigned = ensureHighlightIdAtPos(state, 10, 'doc-ensure');
+    expect(assigned).not.toBeNull();
+    expect(assigned!.id).toBe('00005');
+    expect(assigned!.tr).not.toBeNull();
+
+    const updatedDoc = state.apply(assigned!.tr).doc;
+    expect(extractHighlightedRuns(updatedDoc)).toEqual([
+      { text: 'Início ', color: 'blue', id: '00005', isBold: false },
+      { text: 'negrito', color: 'blue', id: '00005', isBold: true },
+      { text: 'existente', color: 'yellow', id: '00004', isBold: false },
+    ]);
+
+    // Posição 20 cai dentro de "existente" (que já possui data-id="00004")
+    const alreadyHasId = ensureHighlightIdAtPos(updatedDoc ? EditorState.create({ doc: updatedDoc }) : state, 20, 'doc-ensure');
+    expect(alreadyHasId).toEqual({ tr: null, id: '00004' });
   });
 });

@@ -35,6 +35,7 @@ import {
 import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
 import {
   createHighlightTransaction,
+  ensureHighlightIdAtPos,
   generateNextHighlightId,
   parseSequentialHighlightId,
   primeHighlightIdScope,
@@ -42,6 +43,27 @@ import {
   scrollToLatestHighlightInContainer,
   scanHighlightsInMarkdown,
 } from '../../services/highlightIdService';
+import {
+  HIGHLIGHT_COMMENTS_START_MARKER,
+  parseMarkdownWithHighlightComments,
+  composeMarkdownWithHighlightComments,
+  hydrateDocHighlightComments,
+  getDocHighlightComments,
+  getHighlightComment,
+  setHighlightComment,
+  deleteHighlightComment,
+  migrateCommentsOnHighlightOverlap,
+  collectOrderedHighlightIdsFromProseMirrorDoc,
+  collectOrderedHighlightIdsFromMarkdown,
+  extractHighlightTextByIdFromProseMirrorDoc,
+  extractAllCommentedHighlightsInOrder,
+  formatAllCommentsForCopy,
+  syncCommentedMarksInDom,
+  copyTextToClipboard,
+  getActiveCommentCount,
+  setActiveCommentCount,
+  registerCopyAllCommentsHandler,
+} from '../../services/highlightCommentsService';
 import {
   TocHeadingItem,
   extractHeadingsFromProseMirrorDoc,
@@ -218,27 +240,62 @@ export const TiptapEditor: React.FC = () => {
   // State to control popover visibility: only opens on explicit click on a highlight mark
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [activeHighlightColor, setActiveHighlightColor] = useState<HighlightColor>('yellow');
+  const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
+  const [isCommentBoxOpen, setIsCommentBoxOpen] = useState(false);
+  const [commentsVersion, setCommentsVersion] = useState(0);
   const isPopoverOpenRef = useRef(false);
-  const bubbleTippyRef = useRef<{ hide: () => void } | null>(null);
-
-  const bubbleTippyOptions = useMemo(
-    () => ({
-      duration: 100,
-      zIndex: 20,
-      onCreate: (instance: { hide: () => void }) => {
-        bubbleTippyRef.current = instance;
-      },
-    }),
-    []
-  );
+  const activeHighlightIdRef = useRef<string | null>(null);
+  const isCommentBoxOpenRef = useRef(false);
+  const bubbleTippyRef = useRef<{
+    hide: () => void;
+    show?: () => void;
+    popperInstance?: { update?: () => void } | null;
+  } | null>(null);
 
   const setPopoverOpen = useCallback((open: boolean) => {
     isPopoverOpenRef.current = open;
     if (!open) {
       lastClickedMarkPosRef.current = null;
+      isCommentBoxOpenRef.current = false;
+      setIsCommentBoxOpen(false);
+      activeHighlightIdRef.current = null;
+      setActiveHighlightId(null);
+      bubbleTippyRef.current?.hide();
     }
     setIsPopoverOpen(open);
   }, []);
+
+  const bubbleTippyOptions = useMemo(
+    () => ({
+      duration: 100,
+      zIndex: 20,
+      interactive: true,
+      maxWidth: 'none',
+      onCreate: (instance: {
+        hide: () => void;
+        show?: () => void;
+        popperInstance?: { update?: () => void } | null;
+      }) => {
+        bubbleTippyRef.current = instance;
+      },
+      onHide: () => {
+        // Impede que o blur ao ocultar teclado virtual no iPad feche o balão de comentário
+        if (isPopoverOpenRef.current && isCommentBoxOpenRef.current) {
+          return false;
+        }
+        if (isPopoverOpenRef.current) {
+          isPopoverOpenRef.current = false;
+          lastClickedMarkPosRef.current = null;
+          isCommentBoxOpenRef.current = false;
+          setIsCommentBoxOpen(false);
+          activeHighlightIdRef.current = null;
+          setActiveHighlightId(null);
+          setIsPopoverOpen(false);
+        }
+      },
+    }),
+    []
+  );
 
   // Track global mouse/touch active state to avoid premature auto-highlight while dragging selection
   useEffect(() => {
@@ -266,6 +323,53 @@ export const TiptapEditor: React.FC = () => {
   const scheduleDebouncedContentRef = useRef<() => void>(() => {});
   const postponePendingContentFlushRef = useRef<() => void>(() => {});
   const scheduleDebouncedTocRefreshRef = useRef<(ed: Editor | null) => void>(() => {});
+  const commentDomSyncRafRef = useRef<number | null>(null);
+
+  const syncCommentVisualsAndCount = useCallback((ed: Editor | null) => {
+    const currentDocId = useAppStore.getState().document?.docId;
+
+    if (isSourceModeRef.current) {
+      const parsed = parseMarkdownWithHighlightComments(rawContentRef.current);
+      const liveIds = collectOrderedHighlightIdsFromMarkdown(parsed.bodyMarkdown);
+      let count = 0;
+      for (let i = 0; i < liveIds.length; i++) {
+        const c = parsed.comments.get(liveIds[i]);
+        if (typeof c === 'string' && c.trim().length > 0) {
+          count++;
+        }
+      }
+      setActiveCommentCount(count);
+      return;
+    }
+
+    if (!ed || ed.isDestroyed) {
+      setActiveCommentCount(0);
+      return;
+    }
+
+    const commentsMap = getDocHighlightComments(currentDocId);
+    const liveIds = collectOrderedHighlightIdsFromProseMirrorDoc(ed.state.doc);
+    let count = 0;
+    for (let i = 0; i < liveIds.length; i++) {
+      const c = commentsMap.get(liveIds[i]);
+      if (typeof c === 'string' && c.trim().length > 0) {
+        count++;
+      }
+    }
+    setActiveCommentCount(count);
+    syncCommentedMarksInDom(containerRef.current, commentsMap);
+  }, []);
+
+  const scheduleCommentDomSync = useCallback(
+    (ed: Editor | null) => {
+      if (commentDomSyncRafRef.current !== null) return;
+      commentDomSyncRafRef.current = requestAnimationFrame(() => {
+        commentDomSyncRafRef.current = null;
+        syncCommentVisualsAndCount(ed);
+      });
+    },
+    [syncCommentVisualsAndCount]
+  );
 
   // High-performance highlight counting directly from in-memory ProseMirror doc tree
   const updateHighlightCount = useCallback(
@@ -297,8 +401,20 @@ export const TiptapEditor: React.FC = () => {
           }
         });
 
-        primeHighlightIdScope(useAppStore.getState().document?.docId, maxSeq);
+        const currentDocId = useAppStore.getState().document?.docId;
+        primeHighlightIdScope(currentDocId, maxSeq);
         setHighlightCount(uniqueIds.size + unassignedCount);
+
+        const commentsMap = getDocHighlightComments(currentDocId);
+        let liveCommentCount = 0;
+        uniqueIds.forEach((id) => {
+          const comment = commentsMap.get(id);
+          if (typeof comment === 'string' && comment.trim().length > 0) {
+            liveCommentCount++;
+          }
+        });
+        setActiveCommentCount(liveCommentCount);
+        syncCommentedMarksInDom(containerRef.current, commentsMap);
       };
 
       if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
@@ -366,11 +482,12 @@ export const TiptapEditor: React.FC = () => {
       const { from, to } = resolveSelectionRange(currentEditor, preferDomSelection);
       if (from === to) return false;
 
+      const activeDocId = useAppStore.getState().document?.docId;
       const result = createHighlightTransaction(currentEditor.state, {
         from,
         to,
         color: 'yellow',
-        scopeKey: useAppStore.getState().document?.docId,
+        scopeKey: activeDocId,
         collapseToEnd: true,
       });
 
@@ -381,14 +498,21 @@ export const TiptapEditor: React.FC = () => {
         return false;
       }
 
+      if (result.removedIds.length > 0) {
+        migrateCommentsOnHighlightOverlap(activeDocId, result.removedIds, result.id);
+      }
+
       justAppliedHighlightAtRef.current = Date.now();
       setPopoverOpen(false);
       currentEditor.view.dispatch(result.tr);
       window.getSelection()?.removeAllRanges();
       scheduleDebouncedHighlightCount(currentEditor);
+      if (result.removedIds.length > 0) {
+        scheduleCommentDomSync(currentEditor);
+      }
       return true;
     },
-    [resolveSelectionRange, scheduleDebouncedHighlightCount, setPopoverOpen]
+    [resolveSelectionRange, scheduleDebouncedHighlightCount, scheduleCommentDomSync, setPopoverOpen]
   );
 
   // Initialize Tiptap Editor
@@ -457,11 +581,12 @@ export const TiptapEditor: React.FC = () => {
       Markdown.configure({ html: true, transformPastedText: true, transformCopiedText: true, breaks: true }),
     ],
     shouldRerenderOnTransaction: false,
-    content: useAppStore.getState().document?.content || '',
+    content: parseMarkdownWithHighlightComments(useAppStore.getState().document?.content || '').bodyMarkdown,
     editable: isEditable,
     onUpdate: ({ transaction }) => {
       if (!transaction.docChanged) return;
       scheduleDebouncedContentRef.current();
+      scheduleCommentDomSync(editorRef.current);
       if (transactionTouchesHeading(transaction)) {
         scheduleDebouncedTocRefreshRef.current(editorRef.current);
       }
@@ -532,19 +657,24 @@ export const TiptapEditor: React.FC = () => {
       lastEmittedMarkdownRef.current = rawMarkdown;
       markBridgeClean();
       updateDocumentContent(rawMarkdown);
-      setHighlightCount(countHighlightsInRawMarkdown(rawMarkdown));
+      const parsedRaw = parseMarkdownWithHighlightComments(rawMarkdown);
+      setHighlightCount(countHighlightsInRawMarkdown(parsedRaw.bodyMarkdown));
+      syncCommentVisualsAndCount(null);
       return;
     }
 
     const currentEditor = editorRef.current;
     if (!currentEditor || currentEditor.isDestroyed) return;
 
-    const rawMarkdown = serializeDocIncrementally(currentEditor);
+    const bodyMarkdown = serializeDocIncrementally(currentEditor);
+    const liveIds = collectOrderedHighlightIdsFromProseMirrorDoc(currentEditor.state.doc);
+    const commentsMap = getDocHighlightComments(activeStoreDocId);
+    const rawMarkdown = composeMarkdownWithHighlightComments(bodyMarkdown, commentsMap, liveIds);
     lastEmittedMarkdownRef.current = rawMarkdown;
     markBridgeClean();
     updateDocumentContent(rawMarkdown);
     updateHighlightCount(currentEditor);
-  }, [clearPendingContentTimers, updateDocumentContent, updateHighlightCount, setHighlightCount]);
+  }, [clearPendingContentTimers, updateDocumentContent, updateHighlightCount, setHighlightCount, syncCommentVisualsAndCount]);
 
   const armIdleFlushTimer = useCallback(() => {
     clearPendingContentTimers();
@@ -557,8 +687,8 @@ export const TiptapEditor: React.FC = () => {
     markdownDebounceTimerRef.current = setTimeout(() => {
       markdownDebounceTimerRef.current = null;
 
-      // Enquanto o popover de cor/exclusão de grifo estiver aberto, adia a serialização
-      if (isPopoverOpenRef.current && hasPendingBridgeChanges()) {
+      // Enquanto o popover de cor/exclusão (sem caixa de comentário aberta) estiver aberto, adia a serialização
+      if (isPopoverOpenRef.current && !isCommentBoxOpenRef.current && hasPendingBridgeChanges()) {
         armIdleFlushTimer();
         return;
       }
@@ -567,7 +697,7 @@ export const TiptapEditor: React.FC = () => {
         markdownIdleCallbackRef.current = (window as any).requestIdleCallback(
           () => {
             markdownIdleCallbackRef.current = null;
-            if (isPopoverOpenRef.current && hasPendingBridgeChanges()) {
+            if (isPopoverOpenRef.current && !isCommentBoxOpenRef.current && hasPendingBridgeChanges()) {
               armIdleFlushTimer();
               return;
             }
@@ -812,10 +942,15 @@ export const TiptapEditor: React.FC = () => {
         cancelAnimationFrame(tocScrollRafRef.current);
         tocScrollRafRef.current = null;
       }
+      if (commentDomSyncRafRef.current !== null) {
+        cancelAnimationFrame(commentDomSyncRafRef.current);
+        commentDomSyncRafRef.current = null;
+      }
       if (warmUpCancelRef.current) {
         warmUpCancelRef.current();
         warmUpCancelRef.current = null;
       }
+      setActiveCommentCount(0);
       resetTocState();
     };
   }, [flushContent, clearPendingContentTimers]);
@@ -835,28 +970,32 @@ export const TiptapEditor: React.FC = () => {
     isRawDirtyRef.current = false;
     const currentDoc = useAppStore.getState().document;
     const nextContent = currentDoc?.content || '';
+    const parsed = parseMarkdownWithHighlightComments(nextContent);
+    hydrateDocHighlightComments(docId, parsed.comments, true);
 
     lastEmittedMarkdownRef.current = nextContent;
     rawContentRef.current = nextContent;
     setRawContent(nextContent);
 
-    if (!nextContent) {
+    if (!parsed.bodyMarkdown) {
       warmUpCancelRef.current?.();
       warmUpCancelRef.current = null;
       editor.commands.clearContent(false);
       updateHighlightCount(editor);
+      syncCommentVisualsAndCount(editor);
       refreshTocStructure(editor);
       return;
     }
 
     warmUpCancelRef.current?.();
-    editor.commands.setContent(nextContent, false);
+    editor.commands.setContent(parsed.bodyMarkdown, false);
     warmUpCancelRef.current = warmUpIncrementalMarkdownCache(editor);
     updateHighlightCount(editor);
+    syncCommentVisualsAndCount(editor);
     requestAnimationFrame(() => {
       refreshTocStructure(editor);
     });
-  }, [docId, editor, updateHighlightCount, refreshTocStructure, clearPendingContentTimers]);
+  }, [docId, editor, updateHighlightCount, syncCommentVisualsAndCount, refreshTocStructure, clearPendingContentTimers]);
 
   // Escuta atualizações externas de conteúdo na mesma aba (ex.: resolução de conflito, hidratação do IndexedDB ou sync silencioso do OneDrive)
   useEffect(() => {
@@ -870,6 +1009,9 @@ export const TiptapEditor: React.FC = () => {
 
       clearPendingContentTimers();
       markBridgeClean();
+      const parsed = parseMarkdownWithHighlightComments(nextDoc.content);
+      hydrateDocHighlightComments(nextDoc.docId, parsed.comments, true);
+
       lastEmittedMarkdownRef.current = nextDoc.content;
       rawContentRef.current = nextDoc.content;
       isRawDirtyRef.current = false;
@@ -878,18 +1020,20 @@ export const TiptapEditor: React.FC = () => {
       const currentEditor = editorRef.current;
       if (currentEditor && !currentEditor.isDestroyed) {
         warmUpCancelRef.current?.();
-        currentEditor.commands.setContent(nextDoc.content, false);
+        currentEditor.commands.setContent(parsed.bodyMarkdown, false);
         warmUpCancelRef.current = warmUpIncrementalMarkdownCache(currentEditor);
         updateHighlightCount(currentEditor);
+        setCommentsVersion((v) => v + 1);
         requestAnimationFrame(() => {
           refreshTocStructure(currentEditor);
         });
       } else if (isSourceModeRef.current) {
+        syncCommentVisualsAndCount(null);
         refreshTocStructure(null);
       }
     });
     return unsubscribe;
-  }, [updateHighlightCount, refreshTocStructure, clearPendingContentTimers]);
+  }, [updateHighlightCount, syncCommentVisualsAndCount, refreshTocStructure, clearPendingContentTimers]);
 
   const lastScrollSyncAnchorRef = useRef<ScrollSyncAnchor | null>(null);
   const isTransitioningSourceModeRef = useRef<boolean>(false);
@@ -1002,11 +1146,14 @@ export const TiptapEditor: React.FC = () => {
 
       if (editor && !editor.isDestroyed && isRawDirtyRef.current) {
         const latestRaw = rawContentRef.current;
+        const parsed = parseMarkdownWithHighlightComments(latestRaw);
+        hydrateDocHighlightComments(useAppStore.getState().document?.docId, parsed.comments, true);
         lastEmittedMarkdownRef.current = latestRaw;
         warmUpCancelRef.current?.();
-        editor.commands.setContent(latestRaw, false);
+        editor.commands.setContent(parsed.bodyMarkdown, false);
         warmUpCancelRef.current = warmUpIncrementalMarkdownCache(editor);
         updateHighlightCount(editor);
+        setCommentsVersion((v) => v + 1);
         isRawDirtyRef.current = false;
       }
 
@@ -1069,7 +1216,9 @@ export const TiptapEditor: React.FC = () => {
           flushContent();
         }
         if (isRawDirtyRef.current) {
-          editor.commands.setContent(rawContentRef.current, false);
+          const parsed = parseMarkdownWithHighlightComments(rawContentRef.current);
+          hydrateDocHighlightComments(useAppStore.getState().document?.docId, parsed.comments, true);
+          editor.commands.setContent(parsed.bodyMarkdown, false);
           isRawDirtyRef.current = false;
         }
       }
@@ -1377,10 +1526,33 @@ export const TiptapEditor: React.FC = () => {
         }
 
         const clickedColor = resolveMarkColor(markEl, tapPos);
+        const docMarkId = editor.state.doc
+          .resolve(tapPos)
+          .marks()
+          .find((m) => m.type.name === 'customHighlight')
+          ?.attrs?.id;
+        const resolvedId =
+          (typeof clickedId === 'string' && clickedId.trim()) ||
+          (typeof docMarkId === 'string' && docMarkId.trim()) ||
+          null;
+        const prevFrom = currentSel.from;
+        const prevTo = currentSel.to;
+
+        isCommentBoxOpenRef.current = false;
+        setIsCommentBoxOpen(false);
+        activeHighlightIdRef.current = resolvedId;
+        setActiveHighlightId(resolvedId);
         lastClickedMarkPosRef.current = start;
         setActiveHighlightColor(clickedColor);
         setPopoverOpen(true);
         editor.commands.setTextSelection(tapPos);
+        if (prevFrom === tapPos && prevTo === tapPos) {
+          requestAnimationFrame(() => {
+            if (isPopoverOpenRef.current) {
+              bubbleTippyRef.current?.show?.();
+            }
+          });
+        }
         return true;
       } catch (err) {
         // Fallback caso o DOM do <mark> esteja dessincronizado com o estado do ProseMirror
@@ -1521,6 +1693,9 @@ export const TiptapEditor: React.FC = () => {
     const checkVisibilityOnScroll = () => {
       rafId = null;
       if (editor.isDestroyed || !isPopoverOpenRef.current) return;
+      // Trava inteligente: mantém o balão aberto se a caixa de comentário estiver aberta/focada
+      // (protege contra abertura de teclado virtual no iPad/celular ou expansão da caixa de texto)
+      if (isCommentBoxOpenRef.current) return;
 
       try {
         const { from } = editor.state.selection;
@@ -1561,17 +1736,106 @@ export const TiptapEditor: React.FC = () => {
     }
   }, [editor, updateHighlightCount]);
 
+  // Sincroniza decoração visual (borda pontilhada) e contagem de comentários ativos
+  useEffect(() => {
+    syncCommentVisualsAndCount(editor);
+  }, [editor, docId, commentsVersion, isSourceMode, syncCommentVisualsAndCount]);
+
+  // Reposiciona o BubbleMenu quando o balão de comentário abre/expande
+  useEffect(() => {
+    if (!isPopoverOpen) return;
+    const rafId = requestAnimationFrame(() => {
+      bubbleTippyRef.current?.popperInstance?.update?.();
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [isPopoverOpen, isCommentBoxOpen, commentsVersion]);
+
+  const handleCopyAllComments = useCallback(async (): Promise<number> => {
+    const currentDocId = useAppStore.getState().document?.docId;
+
+    if (isSourceModeRef.current) {
+      const parsed = parseMarkdownWithHighlightComments(rawContentRef.current);
+      const items = extractAllCommentedHighlightsInOrder(
+        rawContentRef.current,
+        parsed.comments
+      );
+      if (items.length === 0) return 0;
+      const ok = await copyTextToClipboard(formatAllCommentsForCopy(items));
+      return ok ? items.length : 0;
+    }
+
+    const currentEditor = editorRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return 0;
+
+    const commentsMap = getDocHighlightComments(currentDocId);
+    const items = extractAllCommentedHighlightsInOrder(currentEditor.state.doc, commentsMap);
+    if (items.length === 0) return 0;
+
+    const ok = await copyTextToClipboard(formatAllCommentsForCopy(items));
+    return ok ? items.length : 0;
+  }, []);
+
+  useEffect(() => {
+    return registerCopyAllCommentsHandler(handleCopyAllComments);
+  }, [handleCopyAllComments]);
+
+  const handleTogglePopoverComment = useCallback(() => {
+    if (!editor || editor.isDestroyed) return;
+    let targetId = activeHighlightIdRef.current;
+
+    if (!targetId) {
+      const pos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
+      const ensured = ensureHighlightIdAtPos(
+        editor.state,
+        pos,
+        useAppStore.getState().document?.docId
+      );
+      if (!ensured) return;
+
+      if (ensured.tr) {
+        editor.view.dispatch(ensured.tr);
+        scheduleDebouncedContentRef.current();
+      }
+      targetId = ensured.id;
+      activeHighlightIdRef.current = targetId;
+      setActiveHighlightId(targetId);
+    }
+
+    const nextOpen = !isCommentBoxOpenRef.current;
+    isCommentBoxOpenRef.current = nextOpen;
+    setIsCommentBoxOpen(nextOpen);
+  }, [editor]);
+
+  const handleChangePopoverComment = useCallback((nextComment: string) => {
+    const targetId = activeHighlightIdRef.current;
+    const currentDocId = useAppStore.getState().document?.docId;
+    if (!targetId) return;
+
+    setHighlightComment(currentDocId, targetId, nextComment);
+    setCommentsVersion((v) => v + 1);
+    scheduleDebouncedContentRef.current();
+  }, []);
+
+  const handleDeletePopoverComment = useCallback(() => {
+    const targetId = activeHighlightIdRef.current;
+    const currentDocId = useAppStore.getState().document?.docId;
+    if (!targetId) return;
+
+    deleteHighlightComment(currentDocId, targetId);
+    setCommentsVersion((v) => v + 1);
+    scheduleDebouncedContentRef.current();
+  }, []);
+
   const handleSelectColor = (color: HighlightColor) => {
     if (!editor) return;
 
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
     const centerPos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
+    const attrs = editor.getAttributes('customHighlight');
+    const existingId = activeHighlightIdRef.current || attrs.id;
+    const { from, to } = editor.state.selection;
     setActiveHighlightColor(color);
     setPopoverOpen(false);
-
-    const attrs = editor.getAttributes('customHighlight');
-    const existingId = attrs.id;
-    const { from, to } = editor.state.selection;
 
     if (existingId) {
       const { tr } = editor.state;
@@ -1643,6 +1907,7 @@ export const TiptapEditor: React.FC = () => {
     }
 
     window.getSelection()?.removeAllRanges();
+    scheduleCommentDomSync(editor);
     // Color change does not alter count; no recounting needed
   };
 
@@ -1651,11 +1916,10 @@ export const TiptapEditor: React.FC = () => {
 
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
     const centerPos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
-    setPopoverOpen(false);
-
     const attrs = editor.getAttributes('customHighlight');
-    const existingId = attrs.id;
+    const existingId = activeHighlightIdRef.current || attrs.id;
     const { from, to } = editor.state.selection;
+    setPopoverOpen(false);
 
     if (existingId) {
       const { tr } = editor.state;
@@ -1714,6 +1978,7 @@ export const TiptapEditor: React.FC = () => {
     }
 
     window.getSelection()?.removeAllRanges();
+    scheduleCommentDomSync(editor);
     scheduleDebouncedHighlightCount(editor);
   };
 
@@ -1724,6 +1989,9 @@ export const TiptapEditor: React.FC = () => {
     setRawContent(nextValue);
     scheduleDebouncedContent();
     scheduleDebouncedTocRefresh(editorRef.current);
+    if (nextValue.includes(HIGHLIGHT_COMMENTS_START_MARKER) || getActiveCommentCount() > 0) {
+      syncCommentVisualsAndCount(null);
+    }
   };
 
   const handleRawTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1761,6 +2029,13 @@ export const TiptapEditor: React.FC = () => {
   };
 
   const showSourceEditor = isEditable && isSourceMode;
+  const activeHighlightComment =
+    isPopoverOpen && activeHighlightId ? getHighlightComment(docId, activeHighlightId) : '';
+  const activeHighlightedText =
+    isPopoverOpen && activeHighlightId && editor && !editor.isDestroyed
+      ? extractHighlightTextByIdFromProseMirrorDoc(editor.state.doc, activeHighlightId)
+      : '';
+  const activeCommentsTotal = isPopoverOpen ? getActiveCommentCount() : 0;
 
   return (
     <div className="w-full flex flex-col items-center py-4 px-4 sm:px-6 print:p-0 print:m-0 print:w-full">
@@ -1770,6 +2045,11 @@ export const TiptapEditor: React.FC = () => {
           docId={docId}
           isSourceMode={isSourceMode}
           onToggleSourceMode={handleToggleSourceModeWithScrollSync}
+          onHighlightCommentsChange={() => {
+            setCommentsVersion((v) => v + 1);
+            scheduleDebouncedContentRef.current();
+            scheduleCommentDomSync(editorRef.current);
+          }}
         />
       )}
 
@@ -1808,13 +2088,25 @@ export const TiptapEditor: React.FC = () => {
           <BubbleMenu 
             editor={editor} 
             tippyOptions={bubbleTippyOptions}
-            shouldShow={({ editor }) => isPopoverOpenRef.current && !isEditable && editor.isActive('customHighlight')}
+            shouldShow={({ editor }) =>
+              isPopoverOpenRef.current &&
+              !isEditable &&
+              (editor.isActive('customHighlight') || isCommentBoxOpenRef.current)
+            }
           >
             <HighlightPopover
               activeColor={activeHighlightColor}
               onSelectColor={handleSelectColor}
               onRemoveHighlight={handleRemoveHighlight}
               onClose={() => setPopoverOpen(false)}
+              commentText={activeHighlightComment}
+              highlightedText={activeHighlightedText}
+              totalCommentsCount={activeCommentsTotal}
+              isCommentOpen={isCommentBoxOpen}
+              onToggleComment={handleTogglePopoverComment}
+              onChangeComment={handleChangePopoverComment}
+              onDeleteComment={handleDeletePopoverComment}
+              onCopyAllComments={handleCopyAllComments}
             />
           </BubbleMenu>
         )}

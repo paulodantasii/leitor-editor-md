@@ -16,8 +16,14 @@ import {
   WifiOff,
   Settings,
   Search,
+  MessageSquareText,
+  Check,
 } from 'lucide-react';
 import { requestScrollToLatestHighlight } from '../../services/highlightIdService';
+import {
+  subscribeActiveCommentCount,
+  requestCopyAllComments,
+} from '../../services/highlightCommentsService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveActiveDocument } from '../../services/documentSaveService';
 import { SaveDestinationModal } from '../modals/SaveDestinationModal';
@@ -126,6 +132,19 @@ export const Header: React.FC = () => {
 
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const [activeCommentCount, setActiveCommentCount] = useState(0);
+  const [copiedAllComments, setCopiedAllComments] = useState(false);
+  const copiedAllTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return subscribeActiveCommentCount(setActiveCommentCount);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (copiedAllTimerRef.current) clearTimeout(copiedAllTimerRef.current);
+    };
+  }, []);
 
 
 
@@ -368,6 +387,23 @@ export const Header: React.FC = () => {
     setSyncNotification(isError ? `Erro: ${msg}` : msg);
   };
 
+  const handleCopyAllHeaderComments = async () => {
+    const count = await requestCopyAllComments();
+    if (count <= 0) return;
+
+    setCopiedAllComments(true);
+    if (copiedAllTimerRef.current) clearTimeout(copiedAllTimerRef.current);
+    copiedAllTimerRef.current = setTimeout(() => {
+      setCopiedAllComments(false);
+      copiedAllTimerRef.current = null;
+    }, 1500);
+    showNotification(
+      count === 1
+        ? '1 comentário copiado para a área de transferência!'
+        : `${count} comentários copiados para a área de transferência!`
+    );
+  };
+
   const handleExportMD = () => {
     flushPendingEditorContent();
     const freshDoc = useAppStore.getState().document;
@@ -488,6 +524,35 @@ export const Header: React.FC = () => {
                     }`}
                   >
                     <LocateFixed className="w-3 h-3" />
+                  </button>
+                )}
+
+                {activeCommentCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleCopyAllHeaderComments}
+                    title={`Copiar todos os comentários (${activeCommentCount})`}
+                    aria-label={`Copiar todos os comentários (${activeCommentCount})`}
+                    className={`h-[26px] px-2 ml-0.5 rounded-lg font-medium text-xs flex items-center gap-1 transition-all shrink-0 cursor-pointer ${
+                      copiedAllComments
+                        ? 'bg-emerald-500 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {copiedAllComments ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <MessageSquareText className="w-3.5 h-3.5" />
+                    )}
+                    <span
+                      className={`px-1 py-[1px] rounded-full text-[10px] leading-tight font-bold ${
+                        copiedAllComments
+                          ? 'bg-emerald-700 text-white'
+                          : 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
+                      }`}
+                    >
+                      {activeCommentCount}
+                    </span>
                   </button>
                 )}
               </div>

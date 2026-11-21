@@ -1,3 +1,8 @@
+import {
+  HIGHLIGHT_COMMENTS_START_MARKER,
+  HIGHLIGHT_COMMENTS_END_MARKER,
+} from './highlightCommentsService';
+
 export interface TocHeadingItem {
   /** Identificador estável por índice e nível (ex.: "h-0-1", "h-1-2") */
   readonly id: string;
@@ -91,6 +96,7 @@ export function extractHeadingsFromMarkdown(markdown: string): ReadonlyArray<Toc
   const result: TocHeadingItem[] = [];
   let inCodeFence = false;
   let fenceMarker = '';
+  let inCommentsSection = false;
   let charCursor = 0;
   let index = 0;
 
@@ -101,6 +107,21 @@ export function extractHeadingsFromMarkdown(markdown: string): ReadonlyArray<Toc
     charCursor += line.length + 1;
 
     const trimmed = line.trimStart();
+
+    if (!inCodeFence) {
+      const trimmedLine = trimmed.trim();
+      if (trimmedLine === HIGHLIGHT_COMMENTS_START_MARKER) {
+        inCommentsSection = true;
+        continue;
+      }
+      if (inCommentsSection) {
+        if (trimmedLine === HIGHLIGHT_COMMENTS_END_MARKER) {
+          inCommentsSection = false;
+        }
+        continue;
+      }
+    }
+
     const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
     if (fenceMatch) {
       const marker = fenceMatch[1][0];

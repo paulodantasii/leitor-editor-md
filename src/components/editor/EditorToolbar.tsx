@@ -1,7 +1,19 @@
 import React, { useState, useRef, useEffect, useCallback, useReducer } from 'react';
 import { createPortal } from 'react-dom';
 import { Editor } from '@tiptap/react';
-import { createHighlightTransaction } from '../../services/highlightIdService';
+import {
+  createHighlightTransaction,
+  ensureHighlightIdAtPos,
+} from '../../services/highlightIdService';
+import {
+  getHighlightComment,
+  setHighlightComment,
+  deleteHighlightComment,
+  migrateCommentsOnHighlightOverlap,
+  extractHighlightTextByIdFromProseMirrorDoc,
+  getActiveCommentCount,
+  requestCopyAllComments,
+} from '../../services/highlightCommentsService';
 import {
   TextCaseMode,
   createCaseTransformTransaction,
@@ -49,13 +61,18 @@ import {
   FileCode,
 } from 'lucide-react';
 import { HighlightColor } from '../../types';
-import { HIGHLIGHT_COLORS } from './HighlightPopover';
+import {
+  HIGHLIGHT_COLORS,
+  HighlightCommentToggleButton,
+  HighlightCommentBubble,
+} from './HighlightPopover';
 
 interface EditorToolbarProps {
   editor: Editor | null;
   docId?: string;
   isSourceMode?: boolean;
   onToggleSourceMode?: () => void;
+  onHighlightCommentsChange?: () => void;
 }
 
 function computeToolbarStateKey(editor: Editor): string {
@@ -114,6 +131,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
   docId,
   isSourceMode = false,
   onToggleSourceMode,
+  onHighlightCommentsChange,
 }) => {
   // Re-render a toolbar apenas quando o estado relevante de formatação/seleção mudar.
   const [, forceToolbarUpdate] = useReducer((x: number) => x + 1, 0);
@@ -150,6 +168,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
   }, [editor]);
 
   const [isHighlightMenuOpen, setIsHighlightMenuOpen] = useState(false);
+  const [isToolbarCommentOpen, setIsToolbarCommentOpen] = useState(false);
+  const [, forceCommentUpdate] = useReducer((x: number) => x + 1, 0);
   const [menuCoords, setMenuCoords] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const highlightMenuRef = useRef<HTMLDivElement>(null);
@@ -297,17 +317,34 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
   }, [isCaseMenuOpen]);
 
   useEffect(() => {
+    if (!isHighlightMenuOpen || isSourceMode) {
+      setIsToolbarCommentOpen(false);
+    }
+  }, [isHighlightMenuOpen, isSourceMode]);
+
+  useEffect(() => {
     if (isSourceMode) {
       setIsHighlightMenuOpen(false);
       setIsTableMenuOpen(false);
       setIsCaseMenuOpen(false);
+      setIsToolbarCommentOpen(false);
     }
   }, [isSourceMode]);
 
   if (!editor) return null;
 
   const isCustomHighlightActive = editor.isActive('customHighlight');
-  const activeHighlightColor = (editor.getAttributes('customHighlight')?.color as HighlightColor) || 'yellow';
+  const activeHighlightAttrs = isCustomHighlightActive ? editor.getAttributes('customHighlight') : {};
+  const activeHighlightColor = (activeHighlightAttrs?.color as HighlightColor) || 'yellow';
+  const activeHighlightId =
+    typeof activeHighlightAttrs?.id === 'string' && activeHighlightAttrs.id.trim()
+      ? activeHighlightAttrs.id.trim()
+      : null;
+  const activeCommentText = activeHighlightId ? getHighlightComment(docId, activeHighlightId) : '';
+  const activeHighlightedText =
+    isToolbarCommentOpen && activeHighlightId
+      ? extractHighlightTextByIdFromProseMirrorDoc(editor.state.doc, activeHighlightId)
+      : '';
 
   const $toolbarFrom = editor.state.selection.$from;
   let activeTextAlign = 'justify';
@@ -369,11 +406,29 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
         collapseToEnd: false,
       });
       if (result) {
+        if (result.removedIds.length > 0) {
+          migrateCommentsOnHighlightOverlap(docId, result.removedIds, result.id);
+          onHighlightCommentsChange?.();
+        }
         editor.view.dispatch(result.tr);
         editor.view.focus();
       }
     }
     setIsHighlightMenuOpen(false);
+  };
+
+  const handleToggleToolbarComment = () => {
+    if (!editor || editor.isDestroyed || !isCustomHighlightActive) return;
+    if (!activeHighlightId) {
+      const ensured = ensureHighlightIdAtPos(editor.state, editor.state.selection.from, docId);
+      if (!ensured) return;
+      if (ensured.tr) {
+        editor.view.dispatch(ensured.tr);
+        onHighlightCommentsChange?.();
+      }
+    }
+    setIsToolbarCommentOpen((prev) => !prev);
+    forceCommentUpdate();
   };
 
   const handleRemoveHighlight = () => {
@@ -571,37 +626,85 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
                   transform: 'translateX(-50%)',
                 }}
                 onMouseDown={(e) => {
+                  const target = e.target as HTMLElement | null;
+                  if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
+                    return;
+                  }
                   // Prevent losing editor selection when interacting with popover
                   e.preventDefault();
                 }}
-                className="z-50 bg-white dark:bg-slate-800 rounded-full shadow-2xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150 select-none whitespace-nowrap pointer-events-auto"
+                className={`z-50 bg-white dark:bg-slate-800 shadow-2xl border border-slate-200 dark:border-slate-700 animate-in fade-in zoom-in-95 duration-150 select-none pointer-events-auto ${
+                  isToolbarCommentOpen && isCustomHighlightActive
+                    ? 'rounded-2xl p-2.5 flex flex-col gap-2 w-[312px] sm:w-[340px] max-w-[calc(100vw-16px)]'
+                    : 'rounded-full px-3 py-1.5 flex items-center gap-1.5 whitespace-nowrap'
+                }`}
               >
-                <div className="flex items-center gap-1.5 pr-2 border-r border-slate-200 dark:border-slate-700">
-                  {HIGHLIGHT_COLORS.map((c) => (
+                <div
+                  className={`flex items-center gap-1.5 ${
+                    isToolbarCommentOpen && isCustomHighlightActive ? 'justify-between w-full' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 pr-2 border-r border-slate-200 dark:border-slate-700">
+                    {HIGHLIGHT_COLORS.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => handleSetHighlight(c.id)}
+                        onMouseDown={(e) => e.preventDefault()}
+                        title={`Grifar de ${c.name}`}
+                        className={`w-6 h-6 rounded-full transition-transform hover:scale-110 active:scale-95 ${c.bgClass} ${
+                          isCustomHighlightActive && activeHighlightColor === c.id
+                            ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-800 scale-110'
+                            : ''
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-0.5">
+                    {isCustomHighlightActive && (
+                      <HighlightCommentToggleButton
+                        hasComment={activeCommentText.trim().length > 0}
+                        isCommentOpen={isToolbarCommentOpen}
+                        onToggle={handleToggleToolbarComment}
+                      />
+                    )}
+
                     <button
-                      key={c.id}
                       type="button"
-                      onClick={() => handleSetHighlight(c.id)}
+                      onClick={handleRemoveHighlight}
                       onMouseDown={(e) => e.preventDefault()}
-                      title={`Grifar de ${c.name}`}
-                      className={`w-6 h-6 rounded-full transition-transform hover:scale-110 active:scale-95 ${c.bgClass} ${
-                        isCustomHighlightActive && activeHighlightColor === c.id
-                          ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-slate-800 scale-110'
-                          : ''
-                      }`}
-                    />
-                  ))}
+                      title="Remover grifo"
+                      className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleRemoveHighlight}
-                  onMouseDown={(e) => e.preventDefault()}
-                  title="Remover grifo"
-                  className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {isToolbarCommentOpen && isCustomHighlightActive && activeHighlightId && (
+                  <HighlightCommentBubble
+                    commentText={activeCommentText}
+                    highlightedText={activeHighlightedText}
+                    totalCommentsCount={getActiveCommentCount()}
+                    onChangeComment={(nextComment) => {
+                      setHighlightComment(docId, activeHighlightId, nextComment);
+                      forceCommentUpdate();
+                      onHighlightCommentsChange?.();
+                    }}
+                    onDeleteComment={() => {
+                      deleteHighlightComment(docId, activeHighlightId);
+                      forceCommentUpdate();
+                      onHighlightCommentsChange?.();
+                    }}
+                    onCopyAllComments={requestCopyAllComments}
+                    onClose={() => {
+                      setIsToolbarCommentOpen(false);
+                      setIsHighlightMenuOpen(false);
+                      editor.view.focus();
+                    }}
+                  />
+                )}
               </div>,
               document.body
             )}
