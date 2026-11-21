@@ -459,6 +459,16 @@ export const TiptapEditor: React.FC = () => {
       return;
     }
 
+    // Blindagem contra vazamento entre abas: nunca grava se a store já mudou para outro docId
+    const activeStoreDocId = useAppStore.getState().document?.docId;
+    if (
+      !activeStoreDocId ||
+      (currentLoadedDocIdRef.current && currentLoadedDocIdRef.current !== activeStoreDocId)
+    ) {
+      markBridgeClean();
+      return;
+    }
+
     if (isSourceModeRef.current) {
       const rawMarkdown = rawContentRef.current;
       lastEmittedMarkdownRef.current = rawMarkdown;
@@ -719,6 +729,9 @@ export const TiptapEditor: React.FC = () => {
       return;
     }
 
+    clearPendingContentTimers();
+    markBridgeClean();
+
     currentLoadedDocIdRef.current = docId;
     isRawDirtyRef.current = false;
     const currentDoc = useAppStore.getState().document;
@@ -744,7 +757,7 @@ export const TiptapEditor: React.FC = () => {
     requestAnimationFrame(() => {
       refreshTocStructure(editor);
     });
-  }, [docId, editor, updateHighlightCount, refreshTocStructure]);
+  }, [docId, editor, updateHighlightCount, refreshTocStructure, clearPendingContentTimers]);
 
   // Escuta atualizações externas de conteúdo na mesma aba (ex.: resolução de conflito, hidratação do IndexedDB ou sync silencioso do OneDrive)
   useEffect(() => {
@@ -756,6 +769,8 @@ export const TiptapEditor: React.FC = () => {
       if (nextDoc.content === prevDoc.content) return;
       if (nextDoc.content === lastEmittedMarkdownRef.current) return;
 
+      clearPendingContentTimers();
+      markBridgeClean();
       lastEmittedMarkdownRef.current = nextDoc.content;
       rawContentRef.current = nextDoc.content;
       isRawDirtyRef.current = false;
@@ -775,7 +790,7 @@ export const TiptapEditor: React.FC = () => {
       }
     });
     return unsubscribe;
-  }, [updateHighlightCount, refreshTocStructure]);
+  }, [updateHighlightCount, refreshTocStructure, clearPendingContentTimers]);
 
   const lastScrollSyncAnchorRef = useRef<ScrollSyncAnchor | null>(null);
   const isTransitioningSourceModeRef = useRef<boolean>(false);

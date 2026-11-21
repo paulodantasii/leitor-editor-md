@@ -7,6 +7,9 @@ import {
   saveOpenTabsSession,
   loadOpenTabsSession,
   clearOpenTabsSession,
+  loadUserPreferences,
+  saveUserPreferences,
+  DEFAULT_PREFERENCES,
 } from './storage';
 import { saveRecentDocument } from './recentDocumentsService';
 import { DocumentState, OpenTabsSession } from '../types';
@@ -151,5 +154,13 @@ describe('storage (coalesced saving)', () => {
     expect(localStorage.getItem('leitor_md_document')).toBeNull();
     expect(sessionStorage.getItem('leitor_md_open_tabs_v1')).toBeNull();
     expect(localStorage.getItem('leitor_md_open_tabs_v1')).toBeNull();
+  });
+
+  it('autoSync vem ativado por padrão e persiste no localStorage quando desativado', () => {
+    expect(DEFAULT_PREFERENCES.autoSync).toBe(true);
+    expect(loadUserPreferences().autoSync).toBe(true);
+
+    saveUserPreferences({ ...DEFAULT_PREFERENCES, autoSync: false });
+    expect(loadUserPreferences().autoSync).toBe(false);
   });
 });

@@ -1,13 +1,11 @@
 import React, { useEffect } from 'react';
-import { Cloud, Folder, History, X, FolderOpen } from 'lucide-react';
+import { Cloud, Folder, X, FolderOpen } from 'lucide-react';
 
 interface OpenSourceModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenFromLocal: () => void;
   onOpenFromOneDrive: () => void;
-  onOpenFromRecents: () => void;
-  recentCount: number;
 }
 
 export const OpenSourceModal: React.FC<OpenSourceModalProps> = ({
@@ -15,8 +13,6 @@ export const OpenSourceModal: React.FC<OpenSourceModalProps> = ({
   onClose,
   onOpenFromLocal,
   onOpenFromOneDrive,
-  onOpenFromRecents,
-  recentCount,
 }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -102,35 +98,6 @@ export const OpenSourceModal: React.FC<OpenSourceModalProps> = ({
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                 Navegar pelas pastas sincronizadas na nuvem da Microsoft
-              </div>
-            </div>
-          </button>
-
-          {/* Option 3: Recent Documents */}
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onOpenFromRecents();
-            }}
-            className="w-full p-3.5 rounded-xl border text-left transition-all flex items-center gap-3 group cursor-pointer bg-slate-50 dark:bg-slate-800/80 hover:bg-amber-50 dark:hover:bg-amber-950/30 border-slate-200 dark:border-slate-700 hover:border-amber-500 dark:hover:border-amber-500"
-          >
-            <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-              <History className="w-5 h-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-amber-600 dark:group-hover:text-amber-400">
-                  Documentos Recentes
-                </div>
-                {recentCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-900/70 text-amber-700 dark:text-amber-300">
-                    {recentCount}
-                  </span>
-                )}
-              </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Ver histórico completo de documentos abertos recentemente
               </div>
             </div>
           </button>

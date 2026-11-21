@@ -49,6 +49,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   fontSize: 16,
   fontFamily: 'sans',
   textWidth: 'normal',
+  autoSync: true,
 };
 
 /**

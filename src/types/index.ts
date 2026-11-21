@@ -16,6 +16,7 @@ export interface UserPreferences {
   fontSize: number; // 14 to 24 px
   fontFamily: FontFamily;
   textWidth: TextWidth;
+  autoSync?: boolean;
 }
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'offline-pending' | 'error';
@@ -97,6 +98,17 @@ export interface UserProfile {
 
 export type DocumentSourceType = 'onedrive' | 'local_file' | 'draft';
 
+export type VersionSnapshotReason = 'open' | 'sync' | 'edit' | 'conflict';
+
+export interface DocumentVersionSnapshot {
+  versionId: string;
+  timestamp: number;
+  title: string;
+  content: string;
+  charCount: number;
+  reason: VersionSnapshotReason;
+}
+
 export interface RecentDocumentItem {
   id: string;
   title: string;
@@ -114,4 +126,5 @@ export interface RecentDocumentItem {
   revision?: number;
   draftRevision?: number;
   sourceRevision?: number;
+  versionCount?: number;
 }

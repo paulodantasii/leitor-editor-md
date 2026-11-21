@@ -20,17 +20,37 @@ import {
   LogOut,
   RotateCw,
   AlertCircle,
+  RefreshCw,
+  History,
+  ArrowRight,
 } from 'lucide-react';
 
 export const SettingsModal: React.FC = () => {
-  const { isSettingsModalOpen, setIsSettingsModalOpen, userProfile, setUserProfile } = useAppStore(
+  const {
+    isSettingsModalOpen,
+    setIsSettingsModalOpen,
+    userProfile,
+    setUserProfile,
+    preferences,
+    setPreferences,
+    setIsRecentModalOpen,
+    recentDocuments,
+    loadRecentDocuments,
+  } = useAppStore(
     useShallow((state) => ({
       isSettingsModalOpen: state.isSettingsModalOpen,
       setIsSettingsModalOpen: state.setIsSettingsModalOpen,
       userProfile: state.userProfile,
       setUserProfile: state.setUserProfile,
+      preferences: state.preferences,
+      setPreferences: state.setPreferences,
+      setIsRecentModalOpen: state.setIsRecentModalOpen,
+      recentDocuments: state.recentDocuments,
+      loadRecentDocuments: state.loadRecentDocuments,
     }))
   );
+
+  const autoSync = preferences.autoSync !== false;
 
   const [clientId, setClientIdInput] = useState(getStoredClientId());
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -46,8 +66,9 @@ export const SettingsModal: React.FC = () => {
       setSavedSuccess(false);
       setIsReloadConfirmOpen(false);
       setIsReloading(false);
+      void loadRecentDocuments();
     }
-  }, [isSettingsModalOpen]);
+  }, [isSettingsModalOpen, loadRecentDocuments]);
 
   if (!isSettingsModalOpen) return null;
 
@@ -231,7 +252,78 @@ export const SettingsModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Seção 3: Sistema & Cache */}
+        {/* Seção 3: Sincronização & Backups */}
+        <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-700/70">
+          <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Sincronização & Backups</span>
+          </div>
+
+          {/* Toggle de Sincronização Automática */}
+          <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 p-3.5 rounded-xl flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                Sincronização Automática
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                Sincroniza alterações automaticamente em segundo plano tanto em arquivos locais quanto no OneDrive. Quando desativada, use o botão <strong>Sincronizar</strong> (ou Ctrl+S) para enviar ou puxar atualizações manualmente.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoSync}
+              aria-label="Sincronização Automática"
+              onClick={() => setPreferences({ autoSync: !autoSync })}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 ${
+                autoSync ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                  autoSync ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Cofre de Backups (Histórico de Versões) */}
+          <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 p-3.5 rounded-xl flex items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <History className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                    Histórico de Versões e Backups
+                  </span>
+                  {recentDocuments.length > 0 && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                      {recentDocuments.length}/30
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
+                  Cofre oculto de segurança com até 10 versões salvas por arquivo para recuperação em caso de falhas ou perda acidental.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSettingsModalOpen(false);
+                setIsRecentModalOpen(true);
+              }}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-xs flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer"
+            >
+              <span>Ver Backups</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Seção 4: Sistema & Cache */}
         <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/70">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Sistema & Atualização

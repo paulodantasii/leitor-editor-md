@@ -1,9 +1,14 @@
 import { useAppStore } from '../store/useAppStore';
-import { saveOneDriveFile, downloadOneDriveFile, renameOneDriveFile } from './oneDriveService';
+import {
+  saveOneDriveFile,
+  downloadOneDriveFile,
+  renameOneDriveFile,
+  getOneDriveItemMetadata,
+} from './oneDriveService';
 import { flushPendingEditorContent } from './editorContentBridge';
 import { downloadMarkdownFile } from './exportService';
 import { saveRecentDocument } from './recentDocumentsService';
-import { SaveResult } from '../types';
+import { DocumentState, SaveResult } from '../types';
 
 export interface SaveOptions {
   /**
@@ -141,13 +146,23 @@ class SaveCoordinator {
     if (!doc) {
       return { status: 'ok', message: 'Nenhum documento aberto.' };
     }
+
+    // Trava Anti-Apagão: nunca sobrescreve um documento com stub vazio aguardando hidratação
+    if (doc.storedInDb && (!doc.content || doc.content.length === 0)) {
+      return {
+        status: 'error',
+        message: 'Documento ainda está sendo carregado do cache local.',
+      };
+    }
+
     const docIdAtStart = doc.docId;
     const revisionAtStart = doc.revision ?? 0;
     const contentToSave = doc.content;
     const titleToSave = doc.title;
     const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const hasLocalChanges = Boolean(doc.isDirty || (doc.revision ?? 0) > (doc.sourceRevision ?? 0));
 
-    // Destino 1: OneDrive
+    // Destino 1: OneDrive (Bidirecional: Pull se limpo, Push se alterado)
     if (doc.oneDriveItemId) {
       if (!navigator.onLine) {
         state.setSyncStatus('offline-pending');
@@ -157,142 +172,50 @@ class SaveCoordinator {
         };
       }
 
-      state.setSyncStatus('saving');
-      try {
-        let updatedItem = await saveOneDriveFile(doc.oneDriveItemId, contentToSave, doc.cloudETag);
-
-        // Se o título local foi alterado (ex.: renomeado pela barra de abas), sincroniza o nome no OneDrive via PATCH
-        if (
-          titleToSave &&
-          updatedItem.name &&
-          updatedItem.name !== titleToSave &&
-          typeof renameOneDriveFile === 'function'
-        ) {
-          updatedItem = await renameOneDriveFile(doc.oneDriveItemId, titleToSave);
-        }
-
-        // Verifica se o usuário não trocou de documento enquanto o PUT/PATCH viajava
-        const latest = useAppStore.getState().document;
-        if (latest && latest.docId === docIdAtStart) {
-          const isStillDirty = (latest.revision ?? 0) > revisionAtStart;
-          const resolvedTitle =
-            updatedItem.name && latest.title === titleToSave ? updatedItem.name : latest.title;
-
-          useAppStore.getState().setDocument({
-            title: resolvedTitle,
-            sourceRevision: revisionAtStart,
-            draftRevision: Math.max(latest.draftRevision ?? 0, revisionAtStart),
-            isDirty: isStillDirty,
-            lastSavedAt: nowFormatted,
-            cloudLastModified: updatedItem.lastModifiedDateTime,
-            cloudETag: updatedItem.eTag || null,
-          });
-          useAppStore.getState().setSyncStatus('saved');
-
-          const afterUpdate = useAppStore.getState().document;
-          if (afterUpdate) {
-            const updatedList = await saveRecentDocument({ ...afterUpdate });
-            useAppStore.setState({ recentDocuments: updatedList });
-          }
-        }
-
-        return {
-          status: 'ok',
-          message: 'Salvo no OneDrive!',
-          sourceRevision: revisionAtStart,
-        };
-      } catch (err: any) {
-        useAppStore.getState().setSyncStatus('error');
-        const msg = String(err?.message || '');
-        if (msg.includes('412') || err?.status === 412) {
-          try {
-            const freshContent = await downloadOneDriveFile(doc.oneDriveItemId);
-            useAppStore.getState().setCloudConflict({
-              cloudModified: new Date().toISOString(),
-              cloudContent: freshContent,
-            });
-          } catch {
-            // ignore
-          }
-          return { status: 'conflict', message: 'Conflito: o arquivo foi alterado na nuvem em outro dispositivo.' };
-        }
-        if (msg.includes('401') || msg.includes('login') || msg.includes('token')) {
-          return { status: 'auth', message: 'Sessão expirada. Faça login novamente no OneDrive.' };
-        }
-        return { status: 'error', message: err?.message || 'Erro ao salvar no OneDrive.' };
+      if (!hasLocalChanges) {
+        return await this.pullFromOneDrive(
+          doc,
+          docIdAtStart,
+          revisionAtStart,
+          contentToSave,
+          titleToSave,
+          nowFormatted
+        );
       }
+
+      return await this.pushToOneDrive(
+        doc,
+        docIdAtStart,
+        revisionAtStart,
+        contentToSave,
+        titleToSave,
+        nowFormatted
+      );
     }
 
-    // Destino 2: Arquivo local com Handle
+    // Destino 2: Arquivo local com Handle (Bidirecional: Pull se limpo, Push se alterado)
     const handle = state.fileHandle || doc.fileHandle;
     if (handle && typeof handle.createWritable === 'function') {
-      try {
-        // Detecção de alteração externa antes de gravar
-        if (typeof handle.getFile === 'function') {
-          try {
-            const existingFile = await handle.getFile();
-            if (doc.localLastModified && existingFile && existingFile.lastModified > doc.localLastModified + 1000) {
-              const freshExternalContent = await existingFile.text();
-              useAppStore.getState().setCloudConflict({
-                cloudModified: new Date(existingFile.lastModified).toISOString(),
-                cloudContent: freshExternalContent,
-              });
-              return {
-                status: 'conflict',
-                message: 'Conflito: o arquivo foi alterado fora do navegador por outro aplicativo.',
-              };
-            }
-          } catch {
-            // Se falhou ao inspecionar o arquivo antes de gravar, prossegue com createWritable
-          }
-        }
-
-        const writable = await handle.createWritable();
-        await writable.write(contentToSave);
-        await writable.close();
-
-        let newLocalModified = Date.now();
-        if (typeof handle.getFile === 'function') {
-          try {
-            const latestFile = await handle.getFile();
-            if (latestFile) newLocalModified = latestFile.lastModified;
-          } catch {
-            // ignore
-          }
-        }
-
-        const latest = useAppStore.getState().document;
-        if (latest && latest.docId === docIdAtStart) {
-          const isStillDirty = (latest.revision ?? 0) > revisionAtStart;
-          useAppStore.getState().setDocument({
-            sourceRevision: revisionAtStart,
-            draftRevision: Math.max(latest.draftRevision ?? 0, revisionAtStart),
-            isDirty: isStillDirty,
-            lastSavedAt: nowFormatted,
-            localLastModified: newLocalModified,
-            fileHandle: handle,
-          });
-
-          const afterUpdate = useAppStore.getState().document;
-          if (afterUpdate) {
-            await saveRecentDocument({ ...afterUpdate, fileHandle: handle });
-          }
-        }
-
-        return {
-          status: 'ok',
-          message: 'Arquivo salvo!',
-          sourceRevision: revisionAtStart,
-        };
-      } catch (err: any) {
-        if (err?.name === 'AbortError') {
-          return { status: 'cancelled' };
-        }
-        return {
-          status: 'error',
-          message: err?.message || 'Não foi possível gravar no arquivo local.',
-        };
+      if (!hasLocalChanges) {
+        return await this.pullFromLocalHandle(
+          doc,
+          handle,
+          docIdAtStart,
+          revisionAtStart,
+          contentToSave,
+          titleToSave,
+          nowFormatted
+        );
       }
+
+      return await this.pushToLocalHandle(
+        doc,
+        handle,
+        docIdAtStart,
+        revisionAtStart,
+        contentToSave,
+        nowFormatted
+      );
     }
 
     // Destino 3: Sem fonte vinculada
@@ -335,7 +258,8 @@ class SaveCoordinator {
 
           const afterUpdate = useAppStore.getState().document;
           if (afterUpdate) {
-            await saveRecentDocument({ ...afterUpdate, fileHandle: newHandle });
+            const updatedList = await saveRecentDocument({ ...afterUpdate, fileHandle: newHandle }, 'sync');
+            useAppStore.setState({ recentDocuments: updatedList });
           }
         }
 
@@ -360,7 +284,8 @@ class SaveCoordinator {
 
         const afterUpdate = useAppStore.getState().document;
         if (afterUpdate) {
-          await saveRecentDocument({ ...afterUpdate });
+          const updatedList = await saveRecentDocument({ ...afterUpdate }, 'sync');
+          useAppStore.setState({ recentDocuments: updatedList });
         }
       }
 
@@ -387,7 +312,8 @@ class SaveCoordinator {
 
           const afterUpdate = useAppStore.getState().document;
           if (afterUpdate) {
-            await saveRecentDocument({ ...afterUpdate });
+            const updatedList = await saveRecentDocument({ ...afterUpdate }, 'sync');
+            useAppStore.setState({ recentDocuments: updatedList });
           }
         }
 
@@ -402,6 +328,347 @@ class SaveCoordinator {
           message: fallbackErr?.message || 'Erro ao salvar arquivo.',
         };
       }
+    }
+  }
+
+  private async pullFromOneDrive(
+    doc: DocumentState,
+    docIdAtStart: string | undefined,
+    revisionAtStart: number,
+    contentToSave: string,
+    titleToSave: string,
+    nowFormatted: string
+  ): Promise<SaveResult> {
+    const itemId = doc.oneDriveItemId!;
+    useAppStore.getState().setSyncStatus('saving');
+    try {
+      const [metadata, freshContent] = await Promise.all([
+        getOneDriveItemMetadata(itemId).catch(() => null),
+        downloadOneDriveFile(itemId),
+      ]);
+
+      if (doc.content && doc.content !== freshContent) {
+        await saveRecentDocument({ ...doc }, 'sync');
+      }
+
+      const latest = useAppStore.getState().document;
+      if (latest && latest.docId === docIdAtStart) {
+        if ((latest.revision ?? 0) > revisionAtStart && freshContent !== contentToSave) {
+          await saveRecentDocument({ ...latest }, 'conflict');
+          useAppStore.getState().setCloudConflict({
+            cloudModified: metadata?.lastModifiedDateTime || new Date().toISOString(),
+            cloudContent: freshContent,
+          });
+          useAppStore.getState().setSyncStatus('idle');
+          return {
+            status: 'conflict',
+            message: 'Conflito: o arquivo foi editado localmente enquanto sincronizava.',
+          };
+        }
+
+        const resolvedTitle = metadata?.name || latest.title;
+        const hadChanges = freshContent !== contentToSave || resolvedTitle !== titleToSave;
+        const targetRev = hadChanges ? (latest.revision ?? 0) + 1 : (latest.revision ?? 0);
+
+        useAppStore.getState().setDocument({
+          title: resolvedTitle,
+          content: freshContent,
+          revision: targetRev,
+          sourceRevision: targetRev,
+          draftRevision: Math.max(latest.draftRevision ?? 0, targetRev),
+          isDirty: false,
+          lastSavedAt: nowFormatted,
+          cloudLastModified: metadata?.lastModifiedDateTime ?? latest.cloudLastModified ?? null,
+          cloudETag: metadata?.eTag ?? latest.cloudETag ?? null,
+        });
+        useAppStore.getState().setSyncStatus('saved');
+
+        const afterUpdate = useAppStore.getState().document;
+        if (afterUpdate) {
+          const updatedList = await saveRecentDocument({ ...afterUpdate }, 'sync');
+          useAppStore.setState({ recentDocuments: updatedList });
+        }
+
+        return {
+          status: 'ok',
+          message: hadChanges
+            ? 'Sincronizado: alterações mais recentes carregadas do OneDrive!'
+            : 'Já sincronizado com o OneDrive!',
+          sourceRevision: targetRev,
+        };
+      }
+
+      return {
+        status: 'ok',
+        message: 'Sincronizado com o OneDrive!',
+        sourceRevision: revisionAtStart,
+      };
+    } catch (err: any) {
+      useAppStore.getState().setSyncStatus('error');
+      const msg = String(err?.message || '');
+      if (msg.includes('401') || msg.includes('login') || msg.includes('token')) {
+        return { status: 'auth', message: 'Sessão expirada. Faça login novamente no OneDrive.' };
+      }
+      return { status: 'error', message: err?.message || 'Erro ao sincronizar com o OneDrive.' };
+    }
+  }
+
+  private async pushToOneDrive(
+    doc: DocumentState,
+    docIdAtStart: string | undefined,
+    revisionAtStart: number,
+    contentToSave: string,
+    titleToSave: string,
+    nowFormatted: string
+  ): Promise<SaveResult> {
+    const itemId = doc.oneDriveItemId!;
+    useAppStore.getState().setSyncStatus('saving');
+    const preSyncSnapshot = saveRecentDocument({ ...doc }, 'sync').catch(() => []);
+    try {
+      let updatedItem = await saveOneDriveFile(itemId, contentToSave, doc.cloudETag);
+
+      // Se o título local foi alterado (ex.: renomeado pela barra de abas), sincroniza o nome no OneDrive via PATCH
+      if (
+        titleToSave &&
+        updatedItem.name &&
+        updatedItem.name !== titleToSave &&
+        typeof renameOneDriveFile === 'function'
+      ) {
+        updatedItem = await renameOneDriveFile(itemId, titleToSave);
+      }
+
+      await preSyncSnapshot;
+
+      // Verifica se o usuário não trocou de documento enquanto o PUT/PATCH viajava
+      const latest = useAppStore.getState().document;
+      if (latest && latest.docId === docIdAtStart) {
+        const isStillDirty = (latest.revision ?? 0) > revisionAtStart;
+        const resolvedTitle =
+          updatedItem.name && latest.title === titleToSave ? updatedItem.name : latest.title;
+
+        useAppStore.getState().setDocument({
+          title: resolvedTitle,
+          sourceRevision: revisionAtStart,
+          draftRevision: Math.max(latest.draftRevision ?? 0, revisionAtStart),
+          isDirty: isStillDirty,
+          lastSavedAt: nowFormatted,
+          cloudLastModified: updatedItem.lastModifiedDateTime,
+          cloudETag: updatedItem.eTag || null,
+        });
+        useAppStore.getState().setSyncStatus('saved');
+
+        const afterUpdate = useAppStore.getState().document;
+        if (afterUpdate) {
+          const updatedList = await saveRecentDocument({ ...afterUpdate }, 'sync');
+          useAppStore.setState({ recentDocuments: updatedList });
+        }
+      }
+
+      return {
+        status: 'ok',
+        message: 'Sincronizado com o OneDrive!',
+        sourceRevision: revisionAtStart,
+      };
+    } catch (err: any) {
+      await preSyncSnapshot;
+      useAppStore.getState().setSyncStatus('error');
+      const msg = String(err?.message || '');
+      if (msg.includes('412') || err?.status === 412) {
+        await saveRecentDocument({ ...doc }, 'conflict');
+        try {
+          const freshContent = await downloadOneDriveFile(itemId);
+          useAppStore.getState().setCloudConflict({
+            cloudModified: new Date().toISOString(),
+            cloudContent: freshContent,
+          });
+        } catch {
+          // ignore
+        }
+        return { status: 'conflict', message: 'Conflito: o arquivo foi alterado na nuvem em outro dispositivo.' };
+      }
+      if (msg.includes('401') || msg.includes('login') || msg.includes('token')) {
+        return { status: 'auth', message: 'Sessão expirada. Faça login novamente no OneDrive.' };
+      }
+      return { status: 'error', message: err?.message || 'Erro ao sincronizar com o OneDrive.' };
+    }
+  }
+
+  private async pullFromLocalHandle(
+    doc: DocumentState,
+    handle: any,
+    docIdAtStart: string | undefined,
+    revisionAtStart: number,
+    contentToSave: string,
+    titleToSave: string,
+    nowFormatted: string
+  ): Promise<SaveResult> {
+    if (typeof handle.getFile !== 'function') {
+      useAppStore.getState().setSyncStatus('saved');
+      return {
+        status: 'ok',
+        message: 'Arquivo local já está sincronizado!',
+        sourceRevision: doc.sourceRevision,
+      };
+    }
+
+    useAppStore.getState().setSyncStatus('saving');
+    try {
+      const diskFile = await handle.getFile();
+      const diskText = await diskFile.text();
+
+      if (doc.content && doc.content !== diskText) {
+        await saveRecentDocument({ ...doc, fileHandle: handle }, 'sync');
+      }
+
+      const latest = useAppStore.getState().document;
+      if (latest && latest.docId === docIdAtStart) {
+        if ((latest.revision ?? 0) > revisionAtStart && diskText !== contentToSave) {
+          await saveRecentDocument({ ...latest, fileHandle: handle }, 'conflict');
+          useAppStore.getState().setCloudConflict({
+            cloudModified: new Date(diskFile.lastModified).toISOString(),
+            cloudContent: diskText,
+          });
+          useAppStore.getState().setSyncStatus('idle');
+          return {
+            status: 'conflict',
+            message: 'Conflito: o arquivo foi alterado externamente enquanto sincronizava.',
+          };
+        }
+
+        const resolvedTitle = diskFile.name || latest.title;
+        const hadChanges = diskText !== contentToSave || resolvedTitle !== titleToSave;
+        const targetRev = hadChanges ? (latest.revision ?? 0) + 1 : (latest.revision ?? 0);
+
+        useAppStore.getState().setDocument({
+          title: resolvedTitle,
+          content: diskText,
+          revision: targetRev,
+          sourceRevision: targetRev,
+          draftRevision: Math.max(latest.draftRevision ?? 0, targetRev),
+          isDirty: false,
+          lastSavedAt: nowFormatted,
+          localLastModified: diskFile.lastModified,
+          fileHandle: handle,
+        });
+        useAppStore.getState().setSyncStatus('saved');
+
+        const afterUpdate = useAppStore.getState().document;
+        if (afterUpdate) {
+          const updatedList = await saveRecentDocument({ ...afterUpdate, fileHandle: handle }, 'sync');
+          useAppStore.setState({ recentDocuments: updatedList });
+        }
+
+        return {
+          status: 'ok',
+          message: hadChanges
+            ? 'Sincronizado: alterações externas carregadas do arquivo local!'
+            : 'Arquivo local já está sincronizado!',
+          sourceRevision: targetRev,
+        };
+      }
+
+      return {
+        status: 'ok',
+        message: 'Arquivo local sincronizado!',
+        sourceRevision: revisionAtStart,
+      };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        useAppStore.getState().setSyncStatus('idle');
+        return { status: 'cancelled' };
+      }
+      useAppStore.getState().setSyncStatus('error');
+      return {
+        status: 'error',
+        message: err?.message || 'Não foi possível ler o arquivo local.',
+      };
+    }
+  }
+
+  private async pushToLocalHandle(
+    doc: DocumentState,
+    handle: any,
+    docIdAtStart: string | undefined,
+    revisionAtStart: number,
+    contentToSave: string,
+    nowFormatted: string
+  ): Promise<SaveResult> {
+    try {
+      // Detecção de alteração externa antes de gravar
+      if (typeof handle.getFile === 'function') {
+        try {
+          const existingFile = await handle.getFile();
+          if (doc.localLastModified && existingFile && existingFile.lastModified > doc.localLastModified + 1000) {
+            const freshExternalContent = await existingFile.text();
+            await saveRecentDocument({ ...doc, fileHandle: handle }, 'conflict');
+            useAppStore.getState().setCloudConflict({
+              cloudModified: new Date(existingFile.lastModified).toISOString(),
+              cloudContent: freshExternalContent,
+            });
+            return {
+              status: 'conflict',
+              message: 'Conflito: o arquivo foi alterado fora do navegador por outro aplicativo.',
+            };
+          }
+        } catch {
+          // Se falhou ao inspecionar o arquivo antes de gravar, prossegue com createWritable
+        }
+      }
+
+      useAppStore.getState().setSyncStatus('saving');
+      const preSyncSnapshot = saveRecentDocument({ ...doc, fileHandle: handle }, 'sync').catch(() => []);
+
+      const writable = await handle.createWritable();
+      await writable.write(contentToSave);
+      await writable.close();
+
+      await preSyncSnapshot;
+
+      let newLocalModified = Date.now();
+      if (typeof handle.getFile === 'function') {
+        try {
+          const latestFile = await handle.getFile();
+          if (latestFile) newLocalModified = latestFile.lastModified;
+        } catch {
+          // ignore
+        }
+      }
+
+      const latest = useAppStore.getState().document;
+      if (latest && latest.docId === docIdAtStart) {
+        const isStillDirty = (latest.revision ?? 0) > revisionAtStart;
+        useAppStore.getState().setDocument({
+          sourceRevision: revisionAtStart,
+          draftRevision: Math.max(latest.draftRevision ?? 0, revisionAtStart),
+          isDirty: isStillDirty,
+          lastSavedAt: nowFormatted,
+          localLastModified: newLocalModified,
+          fileHandle: handle,
+        });
+        useAppStore.getState().setSyncStatus('saved');
+
+        const afterUpdate = useAppStore.getState().document;
+        if (afterUpdate) {
+          const updatedList = await saveRecentDocument({ ...afterUpdate, fileHandle: handle }, 'sync');
+          useAppStore.setState({ recentDocuments: updatedList });
+        }
+      }
+
+      return {
+        status: 'ok',
+        message: 'Sincronizado com o arquivo local!',
+        sourceRevision: revisionAtStart,
+      };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        useAppStore.getState().setSyncStatus('idle');
+        return { status: 'cancelled' };
+      }
+      useAppStore.getState().setSyncStatus('error');
+      return {
+        status: 'error',
+        message: err?.message || 'Não foi possível gravar no arquivo local.',
+      };
     }
   }
 }

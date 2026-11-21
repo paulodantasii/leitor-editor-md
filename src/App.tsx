@@ -80,9 +80,9 @@ export const App: React.FC = () => {
 
         saveActiveDocument().then((result) => {
           if (result.status === 'saved') {
-            setSyncNotification(result.message || 'Salvo!');
+            setSyncNotification(result.message || 'Sincronizado!');
           } else if (result.status === 'error') {
-            setSyncNotification(`Erro ao salvar: ${result.message || 'tente novamente.'}`);
+            setSyncNotification(`Erro ao sincronizar: ${result.message || 'tente novamente.'}`);
           }
         });
         return;

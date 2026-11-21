@@ -340,6 +340,11 @@ export const OneDriveModal: React.FC = () => {
         null
       );
 
+      const openedDoc = useAppStore.getState().document;
+      if (openedDoc) {
+        void saveRecentDocument(openedDoc, 'open');
+      }
+
       setSyncStatus('saved');
       setIsOneDriveModalOpen(false);
     } catch (err: any) {
@@ -452,7 +457,7 @@ export const OneDriveModal: React.FC = () => {
       setDocument(updatedDoc);
       setSyncStatus('saved');
 
-      await saveRecentDocument({ ...updatedDoc });
+      await saveRecentDocument({ ...updatedDoc }, 'sync');
       setIsOneDriveModalOpen(false);
 
       if (oneDriveSuccessAction === 'close') {

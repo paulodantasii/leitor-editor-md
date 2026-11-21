@@ -30,7 +30,7 @@ import {
   cleanupBlankRecentDocuments,
 } from '../services/recentDocumentsService';
 import { isBlankUntitledDocument, isHomeTab, HOME_TAB_TITLE } from '../services/documentUtils';
-import { flushPendingEditorContent } from '../services/editorContentBridge';
+import { flushPendingEditorContent, markBridgeClean } from '../services/editorContentBridge';
 import { renameOneDriveFile } from '../services/oneDriveService';
 import { hasValidThemeReloadSnapshot } from '../services/themeReloadSnapshot';
 
@@ -410,6 +410,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // 3. Caso contrário, descarrega o editor atual e adiciona nova aba
     flushPendingEditorContent();
+    markBridgeClean();
     const currentDoc = get().document;
     const currentHandle = get().fileHandle;
 
@@ -470,6 +471,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     flushPendingEditorContent();
+    markBridgeClean();
     const currentDoc = get().document;
     const currentHandle = get().fileHandle;
 
@@ -509,6 +511,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (tabId === state.activeTabId) return;
 
     flushPendingEditorContent();
+    markBridgeClean();
     const currentDoc = get().document;
     const currentHandle = get().fileHandle;
 
@@ -640,6 +643,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const remainingTabs = state.tabs.filter((t) => t.id !== tabId);
 
     if (remainingTabs.length === 0) {
+      markBridgeClean();
       clearLocalDocument();
       clearOpenTabsSession();
       set({
@@ -662,6 +666,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const nextGroups = pruneOrphanGroups(remainingTabs, state.tabGroups);
 
     if (state.activeTabId === tabId) {
+      markBridgeClean();
       const nextIndex = tabIndex < remainingTabs.length ? tabIndex : remainingTabs.length - 1;
       const nextTab = remainingTabs[nextIndex];
 
@@ -1068,9 +1073,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         sourceRevision,
         draftRevision,
         isDirty,
-        ...(isNewContent && !docPartial.docId
-          ? { docId: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}` }
-          : {}),
+        docId:
+          docPartial.docId ||
+          state.document?.docId ||
+          `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       };
       saveLocalDocument(updated);
 
@@ -1165,6 +1171,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
   closeDocument: () => {
+    markBridgeClean();
     clearLocalDocument();
     clearOpenTabsSession();
     set({

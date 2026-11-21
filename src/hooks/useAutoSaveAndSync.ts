@@ -22,6 +22,7 @@ export function useAutoSaveAndSync() {
     setCloudConflict,
     fileHandle,
     isEditable,
+    autoSync,
   } = useAppStore(
     useShallow((state) => ({
       document: state.document,
@@ -31,6 +32,7 @@ export function useAutoSaveAndSync() {
       setCloudConflict: state.setCloudConflict,
       fileHandle: state.fileHandle,
       isEditable: state.isEditable,
+      autoSync: state.preferences.autoSync !== false,
     }))
   );
 
@@ -40,12 +42,17 @@ export function useAutoSaveAndSync() {
   const retryAttemptRef = useRef<number>(0);
   const isCheckingCloudRef = useRef(false);
   const currentDocRef = useRef(currentDoc);
+  const autoSyncRef = useRef(autoSync);
   const isDirtySinceRef = useRef<number | null>(null);
 
   // Mantém refs sincronizadas para evitar closures antigas
   useEffect(() => {
     currentDocRef.current = currentDoc;
   }, [currentDoc]);
+
+  useEffect(() => {
+    autoSyncRef.current = autoSync;
+  }, [autoSync]);
 
   // 1. Proteção contra fechamento acidental da página quando houver edições não salvas em qualquer aba aberta
   useEffect(() => {
@@ -116,6 +123,24 @@ export function useAutoSaveAndSync() {
           clearTimeout(debounceTimerRef.current);
         }
       };
+    }
+
+    // Se a sincronização automática estiver desativada globalmente, não grava em arquivo local nem OneDrive
+    if (!autoSync) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (maxWaitTimerRef.current) {
+        clearTimeout(maxWaitTimerRef.current);
+        maxWaitTimerRef.current = null;
+      }
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      isDirtySinceRef.current = null;
+      return;
     }
 
     // Se não tiver alterações ou não tiver fonte gravável, limpa timers
@@ -200,11 +225,13 @@ export function useAutoSaveAndSync() {
     fileHandle,
     currentDoc?.fileHandle,
     isEditable,
+    autoSync,
   ]);
 
   // 3. Gatilhos Imediatos: Perda de Foco, Aba Oculta, Voltar Online
   useEffect(() => {
     const handleImmediateSaveIfDirty = () => {
+      if (useAppStore.getState().preferences.autoSync === false) return;
       const doc = currentDocRef.current;
       if (!doc) return;
       const state = useAppStore.getState();
@@ -245,7 +272,10 @@ export function useAutoSaveAndSync() {
 
   // 4. Polling Ativo do OneDrive com eTag (Detecção Precisa de Conflitos)
   useEffect(() => {
+    if (!autoSync) return;
+
     const checkCloudFreshness = async () => {
+      if (!autoSyncRef.current) return;
       const doc = currentDocRef.current;
       if (!doc || !doc.oneDriveItemId || !navigator.onLine || saveCoordinator.isSaving()) return;
 
@@ -279,9 +309,14 @@ export function useAutoSaveAndSync() {
             setSyncStatus('saving');
             const freshContent = await downloadOneDriveFile(doc.oneDriveItemId);
 
+            if (doc.content && doc.content !== freshContent) {
+              await saveRecentDocument(doc, 'sync');
+            }
+
             const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             const updatedTitle = metadata.name || doc.title;
+            const nextRev = (doc.revision ?? 0) + 1;
 
             setDocument({
               title: updatedTitle,
@@ -290,19 +325,26 @@ export function useAutoSaveAndSync() {
               cloudETag: cloudETag || null,
               lastSavedAt: nowFormatted,
               isDirty: false,
-              sourceRevision: doc.revision,
+              revision: nextRev,
+              sourceRevision: nextRev,
+              draftRevision: Math.max(doc.draftRevision ?? 0, nextRev),
             });
 
-            await saveRecentDocument({
-              ...doc,
-              title: updatedTitle,
-              content: freshContent,
-              cloudLastModified: cloudModified,
-              cloudETag: cloudETag || null,
-              lastSavedAt: nowFormatted,
-              isDirty: false,
-              sourceRevision: doc.revision,
-            });
+            await saveRecentDocument(
+              {
+                ...doc,
+                title: updatedTitle,
+                content: freshContent,
+                cloudLastModified: cloudModified,
+                cloudETag: cloudETag || null,
+                lastSavedAt: nowFormatted,
+                isDirty: false,
+                revision: nextRev,
+                sourceRevision: nextRev,
+                draftRevision: Math.max(doc.draftRevision ?? 0, nextRev),
+              },
+              'sync'
+            );
 
             setSyncStatus('saved');
             setSyncNotification(`Documento atualizado com a versão mais recente da nuvem (${nowFormatted})`);
@@ -350,5 +392,5 @@ export function useAutoSaveAndSync() {
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
     };
-  }, [currentDoc?.oneDriveItemId, setDocument, setSyncStatus, setSyncNotification, setCloudConflict]);
+  }, [currentDoc?.oneDriveItemId, autoSync, setDocument, setSyncStatus, setSyncNotification, setCloudConflict]);
 }

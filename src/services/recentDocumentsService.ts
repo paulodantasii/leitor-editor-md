@@ -1,13 +1,22 @@
 import { get, set, del } from 'idb-keyval';
-import { DocumentState, RecentDocumentItem, DocumentSourceType } from '../types';
+import {
+  DocumentState,
+  RecentDocumentItem,
+  DocumentSourceType,
+  DocumentVersionSnapshot,
+  VersionSnapshotReason,
+} from '../types';
 import { downloadOneDriveFile, getOneDriveItemMetadata } from './oneDriveService';
 import { isBlankUntitledDocument } from './documentUtils';
 
 export const MAX_RECENT_DOCUMENTS = 30;
+export const MAX_VERSIONS_PER_DOCUMENT = 10;
 
 const RECENTS_INDEX_KEY = 'leitor_md_recents_index_v2';
 const RECENTS_INDEX_BACKUP_KEY = 'leitor_md_recents_index_backup_v2';
 const DOC_KEY_PREFIX = 'doc:';
+const DOC_VERSIONS_KEY_PREFIX = 'doc_versions:';
+const EDIT_VERSION_COALESCE_MS = 120_000;
 
 const LEGACY_RECENT_DOCS_KEY = 'leitor_md_recent_documents_v1';
 const LEGACY_RECENT_DOCS_BACKUP_KEY = 'leitor_md_recent_documents_backup';
@@ -49,7 +58,20 @@ export function getDocumentSourceType(doc: Partial<DocumentState> | Partial<Rece
   if (doc.oneDriveItemId) return 'onedrive';
   if ('sourceType' in doc && doc.sourceType) return doc.sourceType;
   if ('id' in doc && doc.id?.startsWith('file:')) return 'local_file';
+  if ('fileHandle' in doc && doc.fileHandle && typeof doc.fileHandle.getFile === 'function') return 'local_file';
+  if (doc.localLastModified) return 'local_file';
   return 'draft';
+}
+
+async function persistRecentsIndex(list: RecentDocumentItem[]): Promise<void> {
+  await set(RECENTS_INDEX_KEY, list);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(RECENTS_INDEX_BACKUP_KEY, JSON.stringify(list));
+    } catch {
+      // ignore quota
+    }
+  }
 }
 
 /**
@@ -237,15 +259,178 @@ export function applyRecentsEvictionRule(
 }
 
 /**
+ * Lê o histórico de versões (snapshots) de um documento no IndexedDB.
+ * Para itens legados que ainda só possuem a chave `doc:<id>`, sintetiza 1 versão de recuperação.
+ */
+export async function getDocumentVersions(id: string): Promise<DocumentVersionSnapshot[]> {
+  try {
+    const versions = await get<DocumentVersionSnapshot[]>(`${DOC_VERSIONS_KEY_PREFIX}${id}`);
+    if (Array.isArray(versions) && versions.length > 0) {
+      return [...versions].sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    const fullData = await getDocumentFullData(id);
+    if (fullData?.content && fullData.content.trim().length > 0) {
+      return [
+        {
+          versionId: 'v-legacy',
+          timestamp: Date.now(),
+          title: fullData.title || 'Documento.md',
+          content: fullData.content,
+          charCount: fullData.content.length,
+          reason: 'edit',
+        },
+      ];
+    }
+  } catch (err) {
+    console.warn(`Falha ao ler versões do documento ${id} no IndexedDB:`, err);
+  }
+  return [];
+}
+
+/**
+ * Grava um snapshot de versão para o documento (até MAX_VERSIONS_PER_DOCUMENT por arquivo),
+ * aplicando deduplicação, coalescência de edições recentes e trava anti-apagão.
+ */
+export async function saveDocumentVersionSnapshot(
+  doc: DocumentState,
+  reason: VersionSnapshotReason = 'edit'
+): Promise<DocumentVersionSnapshot[]> {
+  const id = getDocumentIdentifier(doc);
+
+  if (
+    isBlankUntitledDocument(doc) ||
+    (doc.storedInDb && (!doc.content || doc.content.length === 0)) ||
+    !doc.content ||
+    doc.content.trim().length === 0
+  ) {
+    return await getDocumentVersions(id);
+  }
+
+  const now = Date.now();
+
+  try {
+    const rawExisting = await get<DocumentVersionSnapshot[]>(`${DOC_VERSIONS_KEY_PREFIX}${id}`);
+    let existing: DocumentVersionSnapshot[] = Array.isArray(rawExisting)
+      ? [...rawExisting].sort((a, b) => b.timestamp - a.timestamp)
+      : [];
+
+    // Migração de versões ao promover rascunho para OneDrive
+    if (doc.oneDriveItemId && doc.docId) {
+      const legacyDraftId = `draft:${doc.docId}`;
+      if (legacyDraftId !== id) {
+        const draftVersions = await get<DocumentVersionSnapshot[]>(`${DOC_VERSIONS_KEY_PREFIX}${legacyDraftId}`).catch(
+          () => null
+        );
+        if (Array.isArray(draftVersions) && draftVersions.length > 0) {
+          const seenIds = new Set(existing.map((v) => v.versionId));
+          const merged = [
+            ...existing,
+            ...draftVersions.filter((v) => !seenIds.has(v.versionId)),
+          ].sort((a, b) => b.timestamp - a.timestamp);
+          existing = merged.slice(0, MAX_VERSIONS_PER_DOCUMENT);
+        }
+        await del(`${DOC_VERSIONS_KEY_PREFIX}${legacyDraftId}`).catch(() => {});
+      }
+    }
+
+    // Deduplicação: evita gravar snapshot repetido quando o texto é idêntico ao topo
+    if (existing.length > 0 && existing[0].content === doc.content) {
+      if (reason !== 'edit' && existing[0].reason === 'edit') {
+        const promotedHead: DocumentVersionSnapshot = {
+          ...existing[0],
+          reason,
+          title: doc.title || existing[0].title,
+        };
+        const nextList = [promotedHead, ...existing.slice(1)];
+        await set(`${DOC_VERSIONS_KEY_PREFIX}${id}`, nextList);
+        return nextList;
+      }
+      return existing;
+    }
+
+    // Coalescência de edições próximas com proteção anti-apagão (>70% de perda preserva versão anterior)
+    if (
+      reason === 'edit' &&
+      existing.length > 0 &&
+      existing[0].reason === 'edit' &&
+      now - existing[0].timestamp < EDIT_VERSION_COALESCE_MS
+    ) {
+      const isAbruptDrop = existing[0].charCount >= 50 && doc.content.length < existing[0].charCount * 0.3;
+      if (!isAbruptDrop) {
+        const updatedHead: DocumentVersionSnapshot = {
+          ...existing[0],
+          timestamp: now,
+          title: doc.title || existing[0].title,
+          content: doc.content,
+          charCount: doc.content.length,
+        };
+        const nextList = [updatedHead, ...existing.slice(1)].slice(0, MAX_VERSIONS_PER_DOCUMENT);
+        await set(`${DOC_VERSIONS_KEY_PREFIX}${id}`, nextList);
+        return nextList;
+      }
+    }
+
+    const newSnapshot: DocumentVersionSnapshot = {
+      versionId: `ver-${now}-${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: now,
+      title: doc.title || 'Sem Título.md',
+      content: doc.content,
+      charCount: doc.content.length,
+      reason,
+    };
+
+    const nextList = [newSnapshot, ...existing].slice(0, MAX_VERSIONS_PER_DOCUMENT);
+    await set(`${DOC_VERSIONS_KEY_PREFIX}${id}`, nextList);
+    return nextList;
+  } catch (err) {
+    console.warn(`Falha ao gravar snapshot de versão para ${id}:`, err);
+    return await getDocumentVersions(id);
+  }
+}
+
+/**
+ * Remove uma versão específica do cofre de backups de um documento.
+ */
+export async function deleteDocumentVersion(
+  docId: string,
+  versionId: string
+): Promise<DocumentVersionSnapshot[]> {
+  try {
+    const raw = await get<DocumentVersionSnapshot[]>(`${DOC_VERSIONS_KEY_PREFIX}${docId}`);
+    const existing = Array.isArray(raw) ? raw : [];
+    const nextList = existing.filter((v) => v.versionId !== versionId);
+    await set(`${DOC_VERSIONS_KEY_PREFIX}${docId}`, nextList);
+
+    const index = await getRecentDocuments();
+    const targetIdx = index.findIndex((item) => item.id === docId);
+    if (targetIdx >= 0) {
+      const updatedIndex = index.map((item) =>
+        item.id === docId ? { ...item, versionCount: nextList.length } : item
+      );
+      await persistRecentsIndex(updatedIndex);
+    }
+
+    return nextList;
+  } catch (err) {
+    console.warn(`Falha ao remover versão ${versionId} de ${docId}:`, err);
+    return await getDocumentVersions(docId);
+  }
+}
+
+/**
  * Salva ou atualiza um documento no IndexedDB.
  *
- * Eficiência da Fase 2:
- * - O conteúdo é gravado exclusivamente na chave individual `doc:<id>`.
+ * Eficiência da Fase 2 + Cofre de Versões:
+ * - O conteúdo é gravado na chave individual `doc:<id>` e versionado em `doc_versions:<id>` (até 10 versões).
  * - O índice leve (`recents_index_v2`) é atualizado apenas com metadados.
  * - Ao editar, `lastOpenedAt` é PRESERVADO (só muda ao abrir).
  * - Rascunhos promovidos (salvos no OneDrive ou disco) têm sua chave antiga removida sem duplicar.
  */
-export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocumentItem[]> {
+export async function saveRecentDocument(
+  doc: DocumentState,
+  reason: VersionSnapshotReason = 'edit'
+): Promise<RecentDocumentItem[]> {
   if (isBlankUntitledDocument(doc)) {
     return await getRecentDocuments();
   }
@@ -257,11 +442,23 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
   const now = Date.now();
 
   try {
-    // 1. Grava o documento completo na sua chave individual no IndexedDB
-    await set(`${DOC_KEY_PREFIX}${id}`, {
-      ...doc,
-      docId: doc.docId || id.replace(/^(onedrive:|draft:|file:)/, ''),
-    });
+    // Trava Anti-Apagão em doc:<id>: se o novo conteúdo estiver vazio mas havia conteúdo anterior,
+    // assegura que o conteúdo anterior esteja arquivado em doc_versions:<id> antes de sobrescrever.
+    const isEmptyIncoming = !doc.content || doc.content.trim() === '';
+    if (isEmptyIncoming) {
+      const prevDoc = await getDocumentFullData(id);
+      if (prevDoc?.content && prevDoc.content.trim().length > 0) {
+        await saveDocumentVersionSnapshot(prevDoc, 'edit');
+      }
+    }
+
+    // 1. Grava o documento completo na sua chave individual no IndexedDB (nunca grava stub vazio)
+    if (!(doc.storedInDb && isEmptyIncoming)) {
+      await set(`${DOC_KEY_PREFIX}${id}`, {
+        ...doc,
+        docId: doc.docId || id.replace(/^(onedrive:|draft:|file:)/, ''),
+      });
+    }
 
     // 2. Promoção de rascunho: se era draft e agora tem OneDrive/arquivo, descarta o rascunho antigo
     if (doc.oneDriveItemId && doc.docId) {
@@ -270,6 +467,9 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
         await del(`${DOC_KEY_PREFIX}${legacyDraftId}`).catch(() => {});
       }
     }
+
+    // 2.5 Grava snapshot no histórico de versões (até 10 versões por arquivo)
+    const versions = await saveDocumentVersionSnapshot(doc, reason);
 
     // 3. Atualiza o índice leve
     const existingIndex = await getRecentDocuments();
@@ -294,6 +494,7 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
       revision: doc.revision ?? 0,
       draftRevision: doc.draftRevision ?? 0,
       sourceRevision: doc.sourceRevision ?? 0,
+      versionCount: versions.length,
     };
 
     // Remove item antigo da lista (ou rascunho promovido) para reinserir
@@ -311,24 +512,17 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
     const candidates = [updatedIndexItem, ...filtered];
     const { list: updatedList, evictedIds, warningAllDrafts } = applyRecentsEvictionRule(candidates, MAX_RECENT_DOCUMENTS);
 
-    // Limpa o cache individual dos arquivos com fonte permanente que foram descarregados do índice
+    // Limpa o cache individual e o cofre de versões dos arquivos permanentes descarregados do índice
     for (const evictedId of evictedIds) {
       await del(`${DOC_KEY_PREFIX}${evictedId}`).catch(() => {});
+      await del(`${DOC_VERSIONS_KEY_PREFIX}${evictedId}`).catch(() => {});
     }
 
     if (warningAllDrafts) {
       console.warn('Cota de documentos atingida: todos os itens são rascunhos ou têm alterações pendentes. Nenhum rascunho foi apagado para preservar os dados.');
     }
 
-    await set(RECENTS_INDEX_KEY, updatedList);
-
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(RECENTS_INDEX_BACKUP_KEY, JSON.stringify(updatedList));
-      } catch {
-        // ignore quota
-      }
-    }
+    await persistRecentsIndex(updatedList);
 
     return updatedList;
   } catch (err) {
@@ -338,24 +532,17 @@ export async function saveRecentDocument(doc: DocumentState): Promise<RecentDocu
 }
 
 /**
- * Remove um documento específico do histórico e do armazenamento por documento.
+ * Remove um documento específico do histórico, do armazenamento por documento e de suas versões.
  */
 export async function deleteRecentDocument(id: string): Promise<RecentDocumentItem[]> {
   try {
     await del(`${DOC_KEY_PREFIX}${id}`).catch(() => {});
+    await del(`${DOC_VERSIONS_KEY_PREFIX}${id}`).catch(() => {});
 
     const existing = await getRecentDocuments();
     const updated = existing.filter((item) => item.id !== id);
 
-    await set(RECENTS_INDEX_KEY, updated);
-
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(RECENTS_INDEX_BACKUP_KEY, JSON.stringify(updated));
-      } catch {
-        // ignore quota
-      }
-    }
+    await persistRecentsIndex(updated);
 
     return updated;
   } catch (err) {
@@ -365,13 +552,14 @@ export async function deleteRecentDocument(id: string): Promise<RecentDocumentIt
 }
 
 /**
- * Limpa todo o histórico de documentos e suas chaves individuais.
+ * Limpa todo o histórico de documentos, suas chaves individuais e versões.
  */
 export async function clearAllRecentDocuments(): Promise<void> {
   try {
     const list = await getRecentDocuments();
     for (const item of list) {
       await del(`${DOC_KEY_PREFIX}${item.id}`).catch(() => {});
+      await del(`${DOC_VERSIONS_KEY_PREFIX}${item.id}`).catch(() => {});
     }
     await set(RECENTS_INDEX_KEY, []);
     if (typeof localStorage !== 'undefined') {
@@ -395,14 +583,7 @@ export async function cleanupBlankRecentDocuments(): Promise<void> {
     const cleaned = existing.filter((item) => !isBlankUntitledDocument(item));
 
     if (cleaned.length !== existing.length) {
-      await set(RECENTS_INDEX_KEY, cleaned);
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(RECENTS_INDEX_BACKUP_KEY, JSON.stringify(cleaned));
-        } catch {
-          // ignore quota
-        }
-      }
+      await persistRecentsIndex(cleaned);
     }
 
     if (typeof localStorage !== 'undefined') {
@@ -466,7 +647,7 @@ export async function loadRecentDocumentWithCloudSync(
     };
 
     // Atualiza cache individual e ordem de abertura
-    await saveRecentDocument(doc);
+    await saveRecentDocument(doc, 'open');
     await touchDocumentOpened(item.id);
 
     return { doc, updatedFromCloud: true };
@@ -508,14 +689,7 @@ async function touchDocumentOpened(id: string): Promise<void> {
     if (itemIndex >= 0) {
       const item = { ...existing[itemIndex], lastOpenedAt: Date.now() };
       const reordered = [item, ...existing.filter((_, idx) => idx !== itemIndex)];
-      await set(RECENTS_INDEX_KEY, reordered);
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(RECENTS_INDEX_BACKUP_KEY, JSON.stringify(reordered));
-        } catch {
-          // ignore quota
-        }
-      }
+      await persistRecentsIndex(reordered);
     }
   } catch {
     // ignore

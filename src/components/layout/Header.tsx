@@ -9,7 +9,7 @@ import {
   LocateFixed,
   Edit3,
   BookOpen,
-  Save,
+  RefreshCw,
   Download,
   Printer,
   MoreVertical,
@@ -62,6 +62,7 @@ export const Header: React.FC = () => {
     setSyncNotification,
     setIsInstallModalOpen,
     setIsSettingsModalOpen,
+    autoSync,
   } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
@@ -84,6 +85,7 @@ export const Header: React.FC = () => {
       setSyncNotification: state.setSyncNotification,
       setIsInstallModalOpen: state.setIsInstallModalOpen,
       setIsSettingsModalOpen: state.setIsSettingsModalOpen,
+      autoSync: state.preferences.autoSync !== false,
     }))
   );
 
@@ -228,11 +230,11 @@ export const Header: React.FC = () => {
   const handleSaveFile = async (): Promise<boolean> => {
     const result = await saveActiveDocument();
     if (result.status === 'saved') {
-      showNotification(result.message || 'Salvo!');
+      showNotification(result.message || 'Sincronizado!');
       return true;
     }
     if (result.status === 'error') {
-      showNotification(result.message || 'Erro ao salvar.', true);
+      showNotification(result.message || 'Erro ao sincronizar.', true);
     }
     return false;
   };
@@ -265,7 +267,7 @@ export const Header: React.FC = () => {
     if (syncStatus === 'error') {
       return {
         text: 'Erro — repetir',
-        subtext: 'Falha ao salvar. Clique para tentar novamente.',
+        subtext: 'Falha ao sincronizar. Clique para tentar novamente.',
         dotClass: 'bg-red-500',
         colorClass: 'text-red-600 dark:text-red-400 font-medium hover:underline',
         badgeClass: 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800',
@@ -277,7 +279,7 @@ export const Header: React.FC = () => {
     if (syncStatus === 'offline-pending' || (!navigator.onLine && currentDoc.isDirty)) {
       return {
         text: 'Pendente (offline)',
-        subtext: 'Salvo neste navegador; será enviado ao voltar online',
+        subtext: 'Salvo neste navegador; será sincronizado ao voltar online',
         dotClass: 'bg-amber-500/80',
         colorClass: 'text-amber-600/80 dark:text-amber-400/80 font-normal',
         badgeClass: '',
@@ -287,8 +289,8 @@ export const Header: React.FC = () => {
 
     if (syncStatus === 'saving') {
       return {
-        text: 'Salvando…',
-        subtext: 'Gravando alterações',
+        text: 'Sincronizando…',
+        subtext: 'Sincronizando alterações',
         dotClass: 'bg-sky-400/80 dark:bg-sky-400/70 animate-pulse',
         colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
         badgeClass: '',
@@ -300,6 +302,17 @@ export const Header: React.FC = () => {
     const hasPendingChanges = hasSource ? currentDoc.isDirty : currentDoc.revision > currentDoc.draftRevision;
 
     if (hasPendingChanges) {
+      if (hasSource && !autoSync) {
+        return {
+          text: 'Não sincronizado',
+          subtext: 'Sincronização automática desativada. Clique para sincronizar agora.',
+          dotClass: 'bg-amber-500',
+          colorClass: 'text-amber-600 dark:text-amber-400 font-medium hover:underline',
+          badgeClass: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800',
+          isClickable: true,
+          action: () => handleSaveButtonClick(),
+        };
+      }
       return {
         text: 'Editando…',
         subtext: 'Alterações em andamento',
@@ -313,7 +326,7 @@ export const Header: React.FC = () => {
     if (currentDoc.oneDriveItemId) {
       const timeStr = currentDoc.lastSavedAt ? ` às ${currentDoc.lastSavedAt}` : '';
       return {
-        text: 'Salvo no OneDrive',
+        text: 'Sincronizado no OneDrive',
         subtext: `Sincronizado na nuvem${timeStr}`,
         dotClass: 'bg-emerald-500/75 dark:bg-emerald-400/70',
         colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
@@ -325,7 +338,7 @@ export const Header: React.FC = () => {
     if (fileHandle) {
       const timeStr = currentDoc.lastSavedAt ? ` às ${currentDoc.lastSavedAt}` : '';
       return {
-        text: 'Salvo no arquivo',
+        text: 'Sincronizado no arquivo',
         subtext: `Arquivo local sincronizado${timeStr}`,
         dotClass: 'bg-emerald-500/75 dark:bg-emerald-400/70',
         colorClass: 'text-slate-400 dark:text-slate-500 font-normal',
@@ -522,7 +535,10 @@ export const Header: React.FC = () => {
                       }}
                       className="w-full p-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg flex items-center gap-2 cursor-pointer"
                     >
-                      <Save className="w-4 h-4 text-emerald-500" /> Salvar
+                      <RefreshCw
+                        className={`w-4 h-4 text-emerald-500 ${syncStatus === 'saving' ? 'animate-spin' : ''}`}
+                      />{' '}
+                      Sincronizar
                     </button>
 
                     <div className="pt-1.5 border-t border-slate-100 dark:border-slate-700/60 mt-1 space-y-1">

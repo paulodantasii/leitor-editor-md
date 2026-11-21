@@ -3,6 +3,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { downloadMarkdownFile } from '../../services/exportService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
+import { saveRecentDocument } from '../../services/recentDocumentsService';
 import { AlertTriangle, Cloud, HardDrive, Download, X } from 'lucide-react';
 import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
 
@@ -27,40 +28,68 @@ export const CloudConflictModal: React.FC = () => {
 
   if (!cloudConflict) return null;
 
+  const isOneDrive = Boolean(currentDoc?.oneDriveItemId);
   const formattedCloudTime = cloudConflict.cloudModified
     ? new Date(cloudConflict.cloudModified).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : 'recente';
 
-  const handleAcceptCloud = () => {
+  const handleAcceptCloud = async () => {
+    flushPendingEditorContent();
+    const freshBeforeOverwrite = useAppStore.getState().document;
+    if (freshBeforeOverwrite && freshBeforeOverwrite.content.trim().length > 0) {
+      await saveRecentDocument({ ...freshBeforeOverwrite }, 'conflict').catch(() => {});
+    }
+
+    const nextRev = (freshBeforeOverwrite?.revision ?? currentDoc?.revision ?? 0) + 1;
+    const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setDocument({
       content: cloudConflict.cloudContent,
-      cloudLastModified: cloudConflict.cloudModified,
-      lastSavedAt: new Date().toLocaleTimeString(),
+      revision: nextRev,
+      sourceRevision: nextRev,
+      draftRevision: Math.max(freshBeforeOverwrite?.draftRevision ?? 0, nextRev),
+      ...(isOneDrive
+        ? { cloudLastModified: cloudConflict.cloudModified, cloudETag: null }
+        : { localLastModified: new Date(cloudConflict.cloudModified).getTime() || Date.now() }),
+      lastSavedAt: nowFormatted,
       isDirty: false,
     });
+    const afterUpdate = useAppStore.getState().document;
+    if (afterUpdate) {
+      await saveRecentDocument({ ...afterUpdate }, 'sync').catch(() => {});
+    }
     setSyncStatus('saved');
     setCloudConflict(null);
-    setSyncNotification(`Versão da nuvem (${formattedCloudTime}) carregada com sucesso`);
+    setSyncNotification(
+      isOneDrive
+        ? `Versão da nuvem (${formattedCloudTime}) carregada com sucesso`
+        : `Versão externa do arquivo (${formattedCloudTime}) carregada com sucesso`
+    );
   };
 
   const handleKeepLocal = () => {
-    // Keep local changes and update cloudLastModified so it overwrites on next autosave
+    // Keep local changes and clear/update external marker so next sync overwrites
     setDocument({
-      cloudLastModified: cloudConflict.cloudModified,
+      ...(isOneDrive
+        ? { cloudLastModified: cloudConflict.cloudModified, cloudETag: null }
+        : { localLastModified: new Date(cloudConflict.cloudModified).getTime() || Date.now() }),
       isDirty: true,
     });
     setCloudConflict(null);
-    setSyncNotification('Mantidas as alterações deste dispositivo. O arquivo será sincronizado com a nuvem.');
+    setSyncNotification(
+      isOneDrive
+        ? 'Mantidas as alterações deste dispositivo. Clique em Sincronizar para enviar para a nuvem.'
+        : 'Mantidas as alterações deste navegador. Clique em Sincronizar para gravar no arquivo local.'
+    );
   };
 
-  const handleBackupAndAcceptCloud = () => {
+  const handleBackupAndAcceptCloud = async () => {
     // Download current unsaved local changes to device
     flushPendingEditorContent();
     const freshDoc = useAppStore.getState().document;
     if (freshDoc) {
       downloadMarkdownFile(freshDoc.content, `backup_local_${freshDoc.title}`);
     }
-    handleAcceptCloud();
+    await handleAcceptCloud();
   };
 
   return (
@@ -96,8 +125,17 @@ export const CloudConflictModal: React.FC = () => {
 
         {/* Message */}
         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-          Uma versão mais recente deste documento foi salva no OneDrive em outro dispositivo às{' '}
-          <strong className="text-slate-800 dark:text-slate-100 font-semibold">{formattedCloudTime}</strong>, mas você também possui alterações pendentes neste dispositivo.
+          {isOneDrive ? (
+            <>
+              Uma versão mais recente deste documento foi salva no OneDrive em outro dispositivo às{' '}
+              <strong className="text-slate-800 dark:text-slate-100 font-semibold">{formattedCloudTime}</strong>, mas você também possui alterações pendentes neste dispositivo.
+            </>
+          ) : (
+            <>
+              O arquivo local foi modificado fora do aplicativo às{' '}
+              <strong className="text-slate-800 dark:text-slate-100 font-semibold">{formattedCloudTime}</strong>, mas você também possui alterações pendentes neste navegador.
+            </>
+          )}
         </p>
 
         {/* Action Buttons */}
@@ -108,7 +146,7 @@ export const CloudConflictModal: React.FC = () => {
             className="w-full h-10 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer"
           >
             <Cloud className="w-4 h-4" />
-            Carregar Versão da Nuvem (Recomendado)
+            {isOneDrive ? 'Carregar Versão da Nuvem (Recomendado)' : 'Carregar Versão do Arquivo Local (Recomendado)'}
           </button>
 
           <button
@@ -117,7 +155,7 @@ export const CloudConflictModal: React.FC = () => {
             className="w-full h-10 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4 text-purple-500" />
-            Salvar Cópia Local e Carregar Nuvem
+            {isOneDrive ? 'Salvar Cópia Local e Carregar Nuvem' : 'Baixar Cópia do Editor e Carregar Disco'}
           </button>
 
           <button

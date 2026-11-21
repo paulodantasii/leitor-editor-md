@@ -25,6 +25,10 @@ import {
   getDocumentFullData,
   loadRecentDocumentWithCloudSync,
   applyRecentsEvictionRule,
+  getDocumentVersions,
+  saveDocumentVersionSnapshot,
+  deleteDocumentVersion,
+  MAX_VERSIONS_PER_DOCUMENT,
 } from './recentDocumentsService';
 import { isBlankUntitledDocument } from './documentUtils';
 
@@ -276,6 +280,86 @@ describe('recentDocumentsService (Fase 0 & Fase 2)', () => {
       expect(list).toHaveLength(31);
       expect(evictedIds).toHaveLength(0);
       expect(warningAllDrafts).toBe(true);
+    });
+  });
+
+  describe('Cofre de Versões / Backups (até 10 versões por arquivo)', () => {
+    it('armazena até 10 versões distintas por arquivo e descarta apenas as mais antigas além do limite', async () => {
+      for (let i = 1; i <= 12; i++) {
+        await saveRecentDocument(
+          makeDoc({
+            docId: 'doc-versioned',
+            oneDriveItemId: 'od-versioned',
+            title: 'Arquivo.md',
+            content: `Conteúdo versão ${i}`,
+          }),
+          i === 1 ? 'open' : 'sync'
+        );
+      }
+
+      const versions = await getDocumentVersions('onedrive:od-versioned');
+      expect(versions).toHaveLength(MAX_VERSIONS_PER_DOCUMENT);
+      expect(versions[0].content).toBe('Conteúdo versão 12');
+      expect(versions[versions.length - 1].content).toBe('Conteúdo versão 3');
+
+      const index = await getRecentDocuments();
+      expect(index[0].versionCount).toBe(MAX_VERSIONS_PER_DOCUMENT);
+    });
+
+    it('deduplica conteúdo idêntico ao topo sem gerar versões repetidas', async () => {
+      await saveDocumentVersionSnapshot(
+        makeDoc({ docId: 'doc-dedupe', content: 'Mesmo texto' }),
+        'edit'
+      );
+      await saveDocumentVersionSnapshot(
+        makeDoc({ docId: 'doc-dedupe', content: 'Mesmo texto' }),
+        'sync'
+      );
+
+      const versions = await getDocumentVersions('draft:doc-dedupe');
+      expect(versions).toHaveLength(1);
+      expect(versions[0].reason).toBe('sync');
+    });
+
+    it('trava anti-apagão preserva versão íntegra anterior ao detectar queda brusca (>70%) ou conteúdo vazio', async () => {
+      const longText = 'Texto jurídico completo e detalhado. '.repeat(20);
+      await saveRecentDocument(
+        makeDoc({ docId: 'doc-antiwipe', content: longText }),
+        'edit'
+      );
+
+      // Edição abrupta que apaga quase tudo dentro da janela de coalescência
+      await saveRecentDocument(
+        makeDoc({ docId: 'doc-antiwipe', content: 'x' }),
+        'edit'
+      );
+
+      // E depois fica completamente vazio
+      await saveRecentDocument(
+        makeDoc({ docId: 'doc-antiwipe', content: '' }),
+        'edit'
+      );
+
+      const versions = await getDocumentVersions('draft:doc-antiwipe');
+      expect(versions.length).toBeGreaterThanOrEqual(2);
+      expect(versions.some((v) => v.content === longText)).toBe(true);
+    });
+
+    it('sintetiza versão para documento legado sem chave doc_versions e permite excluir versão individual', async () => {
+      idb.set('doc:draft:doc-legacy', makeDoc({ docId: 'doc-legacy', content: 'Conteúdo legado' }));
+
+      const legacyVersions = await getDocumentVersions('draft:doc-legacy');
+      expect(legacyVersions).toHaveLength(1);
+      expect(legacyVersions[0].content).toBe('Conteúdo legado');
+
+      await saveRecentDocument(makeDoc({ docId: 'doc-del', content: 'V1' }), 'open');
+      await saveRecentDocument(makeDoc({ docId: 'doc-del', content: 'V2' }), 'sync');
+      const all = await getDocumentVersions('draft:doc-del');
+      expect(all).toHaveLength(2);
+
+      const afterDelete = await deleteDocumentVersion('draft:doc-del', all[0].versionId);
+      expect(afterDelete).toHaveLength(1);
+      expect(afterDelete[0].content).toBe('V1');
     });
   });
 });

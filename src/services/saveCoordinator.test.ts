@@ -305,4 +305,109 @@ describe('saveCoordinator (Fase 1)', () => {
     expect(doc.cloudETag).toBe('W/"etag-2"');
     expect(doc.isDirty).toBe(false);
   });
+
+  it('Modo Pull (OneDrive): quando sem alterações locais, puxa versão mais recente da nuvem', async () => {
+    useAppStore.setState({
+      document: {
+        title: 'Nuvem.md',
+        content: '# Versão Antiga',
+        oneDriveItemId: 'drive-pull-1',
+        lastSavedAt: '10:00:00',
+        isDirty: false,
+        revision: 1,
+        draftRevision: 1,
+        sourceRevision: 1,
+        docId: 'doc-pull-od',
+        cloudETag: 'W/"etag-1"',
+      },
+      fileHandle: null,
+      syncStatus: 'saved',
+    });
+
+    vi.mocked(oneDriveService.getOneDriveItemMetadata).mockResolvedValueOnce({
+      id: 'drive-pull-1',
+      name: 'Nuvem.md',
+      lastModifiedDateTime: '2026-11-21T12:00:00Z',
+      eTag: 'W/"etag-2"',
+    });
+    vi.mocked(oneDriveService.downloadOneDriveFile).mockResolvedValueOnce('# Versão Nova da Nuvem');
+
+    const result = await saveCoordinator.save();
+
+    expect(result.status).toBe('ok');
+    expect(oneDriveService.saveOneDriveFile).not.toHaveBeenCalled();
+    expect(oneDriveService.downloadOneDriveFile).toHaveBeenCalledWith('drive-pull-1');
+
+    const doc = useAppStore.getState().document!;
+    expect(doc.content).toBe('# Versão Nova da Nuvem');
+    expect(doc.cloudETag).toBe('W/"etag-2"');
+    expect(doc.isDirty).toBe(false);
+    expect(doc.revision).toBe(doc.sourceRevision);
+    expect(recentDocumentsService.saveRecentDocument).toHaveBeenCalled();
+  });
+
+  it('Modo Pull (Arquivo Local): quando sem alterações locais, relê alterações externas do disco', async () => {
+    const mockFile = {
+      name: 'Local.md',
+      lastModified: 3000000,
+      text: vi.fn().mockResolvedValue('# Conteúdo Atualizado no Disco'),
+    };
+    const mockHandle = {
+      getFile: vi.fn().mockResolvedValue(mockFile),
+      createWritable: vi.fn(),
+    };
+
+    useAppStore.setState({
+      document: {
+        title: 'Local.md',
+        content: '# Conteúdo Inicial',
+        oneDriveItemId: null,
+        lastSavedAt: '10:00:00',
+        isDirty: false,
+        revision: 0,
+        draftRevision: 0,
+        sourceRevision: 0,
+        docId: 'doc-pull-local',
+        localLastModified: 1000000,
+      },
+      fileHandle: mockHandle as any,
+      syncStatus: 'saved',
+    });
+
+    const result = await saveCoordinator.save();
+
+    expect(result.status).toBe('ok');
+    expect(mockHandle.createWritable).not.toHaveBeenCalled();
+    expect(mockHandle.getFile).toHaveBeenCalledTimes(1);
+
+    const doc = useAppStore.getState().document!;
+    expect(doc.content).toBe('# Conteúdo Atualizado no Disco');
+    expect(doc.localLastModified).toBe(3000000);
+    expect(doc.isDirty).toBe(false);
+    expect(doc.revision).toBe(doc.sourceRevision);
+  });
+
+  it('Trava Anti-Apagão: bloqueia sincronização quando documento é stub não hidratado (storedInDb: true e vazio)', async () => {
+    useAppStore.setState({
+      document: {
+        title: 'Stub.md',
+        content: '',
+        storedInDb: true,
+        oneDriveItemId: 'drive-stub',
+        lastSavedAt: null,
+        isDirty: true,
+        revision: 1,
+        draftRevision: 0,
+        sourceRevision: 0,
+        docId: 'doc-stub',
+      },
+      fileHandle: null,
+    });
+
+    const result = await saveCoordinator.save();
+
+    expect(result.status).toBe('error');
+    expect(oneDriveService.saveOneDriveFile).not.toHaveBeenCalled();
+    expect(oneDriveService.downloadOneDriveFile).not.toHaveBeenCalled();
+  });
 });
