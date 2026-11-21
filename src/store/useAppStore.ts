@@ -67,6 +67,14 @@ interface AppState {
   setIsSourceMode: (active: boolean) => void;
   toggleSourceMode: () => void;
 
+  // Search & Replace UI
+  isSearchOpen: boolean;
+  isReplaceExpanded: boolean;
+  openSearch: (options?: { expandReplace?: boolean }) => void;
+  closeSearch: () => void;
+  toggleSearch: (expandReplace?: boolean) => void;
+  setIsReplaceExpanded: (expanded: boolean) => void;
+
   // Document State
   document: DocumentState | null;
   setDocument: (doc: Partial<DocumentState>) => void;
@@ -153,6 +161,8 @@ const HOME_VIEW_STATE: Pick<
   | 'isEditable'
   | 'isSourceMode'
   | 'isHighlightMode'
+  | 'isSearchOpen'
+  | 'isReplaceExpanded'
   | 'highlightCount'
   | 'syncStatus'
   | 'syncNotification'
@@ -163,6 +173,8 @@ const HOME_VIEW_STATE: Pick<
   isEditable: false,
   isSourceMode: false,
   isHighlightMode: false,
+  isSearchOpen: false,
+  isReplaceExpanded: false,
   highlightCount: 0,
   syncStatus: 'idle' as SyncStatus,
   syncNotification: null,
@@ -655,6 +667,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         isEditable: false,
         isSourceMode: false,
         isHighlightMode: false,
+        isSearchOpen: false,
+        isReplaceExpanded: false,
         highlightCount: 0,
         syncStatus: 'idle',
         syncNotification: null,
@@ -1028,6 +1042,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       isSourceMode: state.isEditable ? !state.isSourceMode : false,
     })),
 
+  // Search & Replace UI
+  isSearchOpen: false,
+  isReplaceExpanded: false,
+  openSearch: (options) =>
+    set((state) => ({
+      isSearchOpen: true,
+      isReplaceExpanded:
+        options?.expandReplace !== undefined ? options.expandReplace : state.isReplaceExpanded,
+    })),
+  closeSearch: () =>
+    set({
+      isSearchOpen: false,
+    }),
+  toggleSearch: (expandReplace) =>
+    set((state) => {
+      const nextOpen = !state.isSearchOpen;
+      return {
+        isSearchOpen: nextOpen,
+        isReplaceExpanded:
+          nextOpen && expandReplace !== undefined ? expandReplace : state.isReplaceExpanded,
+      };
+    }),
+  setIsReplaceExpanded: (expanded) => set({ isReplaceExpanded: expanded }),
+
   // Document State
   document: initialDoc,
   setDocument: (docPartial) => {
@@ -1183,6 +1221,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       isEditable: false,
       isSourceMode: false,
       isHighlightMode: false,
+      isSearchOpen: false,
+      isReplaceExpanded: false,
       highlightCount: 0,
       syncStatus: 'idle',
       syncNotification: null,

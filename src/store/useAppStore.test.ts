@@ -696,6 +696,34 @@ describe('Aba Início (Nova Aba)', () => {
     expect(state.tabs).toHaveLength(0);
     expect(state.activeTabId).toBeNull();
   });
+
+  it('gerencia abertura/fechamento da barra de busca e fecha ao ir para a aba Início ou fechar documento', () => {
+    useAppStore.getState().openTab({ title: 'Doc Busca.md', content: 'Conteúdo' });
+    useAppStore.getState().openSearch({ expandReplace: true });
+
+    expect(useAppStore.getState().isSearchOpen).toBe(true);
+    expect(useAppStore.getState().isReplaceExpanded).toBe(true);
+
+    useAppStore.getState().toggleSearch();
+    expect(useAppStore.getState().isSearchOpen).toBe(false);
+
+    useAppStore.getState().toggleSearch(false);
+    expect(useAppStore.getState().isSearchOpen).toBe(true);
+    expect(useAppStore.getState().isReplaceExpanded).toBe(false);
+
+    useAppStore.getState().setIsReplaceExpanded(true);
+    expect(useAppStore.getState().isReplaceExpanded).toBe(true);
+
+    useAppStore.getState().openHomeTab();
+    expect(useAppStore.getState().isSearchOpen).toBe(false);
+    expect(useAppStore.getState().isReplaceExpanded).toBe(false);
+
+    useAppStore.getState().openTab({ title: 'Doc Busca 2.md', content: 'Texto' });
+    useAppStore.getState().openSearch({ expandReplace: true });
+    useAppStore.getState().closeDocument();
+    expect(useAppStore.getState().isSearchOpen).toBe(false);
+    expect(useAppStore.getState().isReplaceExpanded).toBe(false);
+  });
 });
 
 describe('Inicialização Limpa vs Recarga de Tema (Boot Lifecycle)', () => {

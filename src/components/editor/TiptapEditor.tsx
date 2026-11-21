@@ -21,6 +21,10 @@ import { useAppStore } from '../../store/useAppStore';
 import { CustomHighlight } from './CustomHighlight';
 import { HighlightPopover } from './HighlightPopover';
 import { EditorToolbar } from './EditorToolbar';
+import { SearchHighlightExtension } from './SearchHighlightExtension';
+import { FindReplaceBar } from './FindReplaceBar';
+import { SourceSearchBackdrop } from './SourceSearchBackdrop';
+import { useDocumentSearch } from '../../hooks/useDocumentSearch';
 import { HighlightColor } from '../../types';
 import {
   registerEditorFlushHandler,
@@ -380,6 +384,7 @@ export const TiptapEditor: React.FC = () => {
       TextStyle,
       Color,
       CustomHighlight,
+      SearchHighlightExtension,
       Markdown.configure({ html: true, transformPastedText: true, transformCopiedText: true, breaks: true }),
     ],
     shouldRerenderOnTransaction: false,
@@ -677,6 +682,47 @@ export const TiptapEditor: React.FC = () => {
   );
 
   scheduleDebouncedTocRefreshRef.current = scheduleDebouncedTocRefresh;
+
+  const handleApplyRawReplacement = useCallback(
+    (nextRaw: string, cursorOffset?: number) => {
+      rawContentRef.current = nextRaw;
+      isRawDirtyRef.current = true;
+      setRawContent(nextRaw);
+      scheduleDebouncedContent();
+      scheduleDebouncedTocRefresh(editorRef.current);
+
+      if (typeof cursorOffset === 'number') {
+        requestAnimationFrame(() => {
+          const el = rawTextareaRef.current;
+          if (el && document.activeElement === el) {
+            const safePos = Math.max(0, Math.min(cursorOffset, nextRaw.length));
+            el.setSelectionRange(safePos, safePos);
+          }
+        });
+      }
+    },
+    [scheduleDebouncedContent, scheduleDebouncedTocRefresh]
+  );
+
+  const handleUpdateSourceHighlightCount = useCallback(
+    (rawMarkdown: string) => {
+      setHighlightCount(countHighlightsInRawMarkdown(rawMarkdown));
+    },
+    [setHighlightCount]
+  );
+
+  const documentSearch = useDocumentSearch({
+    editor,
+    docId,
+    isEditable,
+    isSourceMode,
+    rawContent,
+    rawTextareaRef,
+    onApplyRawReplacement: handleApplyRawReplacement,
+    onScheduleDebouncedContent: scheduleDebouncedContent,
+    onUpdateVisualHighlightCount: updateHighlightCount,
+    onUpdateSourceHighlightCount: handleUpdateSourceHighlightCount,
+  });
 
   // Register bridge flush handler & window lifecycle guards (background/close)
   useEffect(() => {
@@ -992,6 +1038,7 @@ export const TiptapEditor: React.FC = () => {
       }
 
       if (isSourceModeRef.current) return;
+      if (e.defaultPrevented || useAppStore.getState().isSearchOpen) return;
       if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'F3') {
         const currentEditor = editorRef.current;
         if (!currentEditor || currentEditor.isDestroyed) return;
@@ -1655,6 +1702,30 @@ export const TiptapEditor: React.FC = () => {
         } ${isHighlightMode ? 'highlight-mode-active' : ''} ${isEditable ? 'editor-mode-active' : ''} print:max-w-none print:w-full print:p-0 print:m-0`}
         style={{ fontSize: `${preferences.fontSize}px` }}
       >
+        <FindReplaceBar
+          isOpen={documentSearch.isOpen}
+          isReplaceExpanded={documentSearch.isReplaceExpanded}
+          isEditable={isEditable}
+          query={documentSearch.query}
+          replacement={documentSearch.replacement}
+          options={documentSearch.options}
+          matches={documentSearch.matches}
+          activeIndex={documentSearch.activeIndex}
+          error={documentSearch.error}
+          replaceFeedback={documentSearch.replaceFeedback}
+          searchInputRef={documentSearch.searchInputRef}
+          replaceInputRef={documentSearch.replaceInputRef}
+          onQueryChange={documentSearch.onQueryChange}
+          onReplacementChange={documentSearch.onReplacementChange}
+          onToggleOption={documentSearch.onToggleOption}
+          onToggleReplaceExpanded={documentSearch.onToggleReplaceExpanded}
+          onNext={documentSearch.onNext}
+          onPrev={documentSearch.onPrev}
+          onReplaceCurrent={documentSearch.onReplaceCurrent}
+          onReplaceAll={documentSearch.onReplaceAll}
+          onClose={documentSearch.onClose}
+        />
+
         {editor && (
           <BubbleMenu 
             editor={editor} 
@@ -1680,17 +1751,26 @@ export const TiptapEditor: React.FC = () => {
                 Edição direta do arquivo .md • Atalho: Ctrl+;
               </span>
             </div>
-            <textarea
-              ref={rawTextareaRef}
-              value={rawContent}
-              onChange={handleRawTextareaChange}
-              onKeyDown={handleRawTextareaKeyDown}
-              spellCheck={false}
-              aria-label="Editor de código-fonte Markdown"
-              placeholder="Digite o código Markdown puro aqui..."
-              className="w-full min-h-[65vh] bg-transparent text-slate-800 dark:text-slate-100 font-mono leading-relaxed resize-none outline-none border-none p-0 m-0 overflow-hidden selection:bg-blue-500/20"
-              style={{ fontSize: `${Math.max(13, preferences.fontSize - 1)}px` }}
-            />
+            <div className="relative w-full">
+              <SourceSearchBackdrop
+                content={rawContent}
+                matches={documentSearch.matches}
+                activeIndex={documentSearch.activeIndex}
+                fontSizePx={Math.max(13, preferences.fontSize - 1)}
+                isOpen={documentSearch.isOpen}
+              />
+              <textarea
+                ref={rawTextareaRef}
+                value={rawContent}
+                onChange={handleRawTextareaChange}
+                onKeyDown={handleRawTextareaKeyDown}
+                spellCheck={false}
+                aria-label="Editor de código-fonte Markdown"
+                placeholder="Digite o código Markdown puro aqui..."
+                className="relative z-10 w-full min-h-[65vh] bg-transparent text-slate-800 dark:text-slate-100 font-mono leading-relaxed resize-none outline-none border-none p-0 m-0 overflow-hidden selection:bg-blue-500/20"
+                style={{ fontSize: `${Math.max(13, preferences.fontSize - 1)}px` }}
+              />
+            </div>
           </div>
         )}
         

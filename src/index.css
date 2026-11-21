@@ -188,6 +188,36 @@ mark.gray {
   color: #f8fafc;
 }
 
+/* Search & Replace Match Highlights (sem padding/margin horizontal para preservar alinhamento no Modo Código-Fonte) */
+.search-match {
+  background-color: rgba(250, 204, 21, 0.42);
+  border-radius: 2px;
+  box-shadow: inset 0 -1.5px 0 rgba(217, 119, 6, 0.55);
+}
+
+.search-match-active {
+  background-color: rgba(249, 115, 22, 0.42);
+  border-radius: 2px;
+  outline: 2px solid rgba(234, 88, 12, 0.85);
+  outline-offset: 0px;
+}
+
+.dark .search-match {
+  background-color: rgba(250, 204, 21, 0.28);
+  box-shadow: inset 0 -1.5px 0 rgba(251, 191, 36, 0.65);
+}
+
+.dark .search-match-active {
+  background-color: rgba(249, 115, 22, 0.42);
+  outline: 2px solid rgba(251, 146, 60, 0.95);
+  outline-offset: 0px;
+}
+
+.source-search-backdrop .search-match,
+.source-search-backdrop .search-match-active {
+  color: transparent !important;
+}
+
 /* Typography options for editor */
 .font-sans-editor {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -664,6 +694,7 @@ html.scroll-restoring body {
   header,
   .print\:hidden,
   [data-highlight-popover],
+  [data-find-replace-bar],
   .tippy-box,
   .bubble-menu,
   button,
@@ -876,5 +907,13 @@ html.scroll-restoring body {
 
   mark.gray {
     background-color: #cbd5e1 !important;
+  }
+
+  /* Hide search highlight overlays during PDF export / print */
+  .search-match,
+  .search-match-active {
+    background-color: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
 }

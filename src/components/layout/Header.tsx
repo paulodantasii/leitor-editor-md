@@ -15,6 +15,7 @@ import {
   MoreVertical,
   WifiOff,
   Settings,
+  Search,
 } from 'lucide-react';
 import { requestScrollToLatestHighlight } from '../../services/highlightIdService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
@@ -63,6 +64,8 @@ export const Header: React.FC = () => {
     setIsInstallModalOpen,
     setIsSettingsModalOpen,
     autoSync,
+    isSearchOpen,
+    toggleSearch,
   } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
@@ -86,6 +89,8 @@ export const Header: React.FC = () => {
       setIsInstallModalOpen: state.setIsInstallModalOpen,
       setIsSettingsModalOpen: state.setIsSettingsModalOpen,
       autoSync: state.preferences.autoSync !== false,
+      isSearchOpen: state.isSearchOpen,
+      toggleSearch: state.toggleSearch,
     }))
   );
 
@@ -425,10 +430,27 @@ export const Header: React.FC = () => {
           )}
         </div>
 
-        {/* Direita: Grifar, Leitura | Edição, Aparência e menu [...] */}
+        {/* Direita: Buscar, Grifar, Leitura | Edição, Aparência e menu [...] */}
         <div className="flex items-center justify-end gap-1.5 sm:gap-2 shrink-0 ml-auto">
           {hasDocument && (
             <>
+              {/* Botão Localizar e Substituir */}
+              <button
+                type="button"
+                onClick={() => toggleSearch()}
+                aria-pressed={isSearchOpen}
+                aria-label="Localizar e substituir no documento"
+                title="Localizar e substituir (Ctrl+F / Ctrl+H)"
+                className={`px-2 sm:px-2.5 h-[26px] rounded-lg font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                  isSearchOpen
+                    ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">Buscar</span>
+              </button>
+
               {/* Modo Grifar (Toggle Button + Badge) + Botão Ir para o Grifo Mais Recente */}
               <div className="flex items-center gap-0.5 shrink-0">
                 <button
