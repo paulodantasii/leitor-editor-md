@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitDisplayName } from './displayName';
+import { splitDisplayName, abbreviateMiddle } from './displayName';
 
 describe('splitDisplayName', () => {
   it('1. retorna nome curto sem divisão na cauda', () => {
@@ -78,5 +78,85 @@ describe('splitDisplayName', () => {
   it('7. string vazia retorna head e tail vazios', () => {
     const result = splitDisplayName('');
     expect(result).toEqual({ head: '', tail: '' });
+  });
+
+  it('8. preserva espaço e prefere corte em fronteira de palavra (regressão Direito Digital / Direito das Famílias)', () => {
+    const digital = splitDisplayName('Direito Digital');
+    expect(digital.head + digital.tail).toBe('Direito Digital');
+    expect(digital.head).toBe('Direito ');
+    expect(digital.tail).toBe('Digital');
+
+    const familias = splitDisplayName('Direito das Famílias.md');
+    expect(familias.head + familias.tail).toBe('Direito das Famílias.md');
+    expect(familias.head).toBe('Direito das ');
+    expect(familias.tail).toBe('Famílias.md');
+
+    const constitucional = splitDisplayName('Direito Constitucional');
+    expect(constitucional.head + constitucional.tail).toBe('Direito Constitucional');
+    expect(constitucional.head.endsWith(' ')).toBe(true);
+    expect(constitucional.tail).toBe('Constitucional');
+  });
+});
+
+describe('abbreviateMiddle', () => {
+  it('1. retorna nomes que cabem no limite sem abreviação', () => {
+    expect(abbreviateMiddle('Aula.md', 18)).toBe('Aula.md');
+    expect(abbreviateMiddle('Direito Digital', 18)).toBe('Direito Digital');
+    expect(abbreviateMiddle('Direito das Famílias.md', 48)).toBe('Direito das Famílias.md');
+    expect(abbreviateMiddle('Direito das Famílias.md', 28)).toBe('Direito das Famílias.md');
+  });
+
+  it('2. abrevia nomes longos mantendo início, fim e extensão dentro do limite + 2', () => {
+    const longName = 'Direito das Famílias - Mapeamento e Cronograma.md';
+
+    const compact = abbreviateMiddle(longName, 32);
+    expect(Array.from(compact).length).toBeLessThanOrEqual(34);
+    expect(compact.startsWith('Direito')).toBe(true);
+    expect(compact.endsWith('Cronograma.md')).toBe(true);
+    expect(compact.includes('…')).toBe(true);
+
+    const active = abbreviateMiddle(longName, 48);
+    expect(Array.from(active).length).toBeLessThanOrEqual(50);
+    expect(active.startsWith('Direito das Famílias')).toBe(true);
+    expect(active.endsWith('Cronograma.md')).toBe(true);
+    expect(active.includes('…')).toBe(true);
+
+    const narrow = abbreviateMiddle(longName, 18);
+    expect(Array.from(narrow).length).toBeLessThanOrEqual(20);
+    expect(narrow.endsWith('.md')).toBe(true);
+    expect(narrow.includes('…')).toBe(true);
+  });
+
+  it('3. abrevia nomes longos sem espaços respeitando o limite', () => {
+    const noSpaces = 'ProjetoDePesquisaSuperLongoParaTestarTruncamentoSemNenhumaExtensao';
+    const result = abbreviateMiddle(noSpaces, 28);
+    expect(Array.from(result).length).toBeLessThanOrEqual(30);
+    expect(result.startsWith('Projeto')).toBe(true);
+    expect(result.endsWith('Extensao')).toBe(true);
+    expect(result.includes('…')).toBe(true);
+  });
+
+  it('4. nomes com emojis não geram surrogates soltos', () => {
+    for (let maxChars = 10; maxChars <= 35; maxChars++) {
+      const name = 'Relatório 🚀 Financeiro Trimestral 📈 Análise de Investimentos 2026.md';
+      const result = abbreviateMiddle(name, maxChars);
+
+      for (let i = 0; i < result.length; i++) {
+        const code = result.charCodeAt(i);
+        if (code >= 0xd800 && code <= 0xdbff) {
+          const next = result.charCodeAt(i + 1);
+          expect(next >= 0xdc00 && next <= 0xdfff).toBe(true);
+        }
+        if (code >= 0xdc00 && code <= 0xdfff) {
+          const prev = result.charCodeAt(i - 1);
+          expect(prev >= 0xd800 && prev <= 0xdbff).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('5. string vazia retorna string vazia', () => {
+    expect(abbreviateMiddle('', 28)).toBe('');
+    expect(abbreviateMiddle('', 0)).toBe('');
   });
 });

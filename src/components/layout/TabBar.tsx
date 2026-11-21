@@ -3,10 +3,16 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../store/useAppStore';
 import { TabItem, TabGroup, HighlightColor } from '../../types';
 import { getHighlightColorOption, HighlightPopover } from '../editor/HighlightPopover';
-import { MiddleEllipsisText } from '../ui/MiddleEllipsisText';
+import { abbreviateMiddle } from '../../services/displayName';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { saveCoordinator } from '../../services/saveCoordinator';
 import { isHomeTab } from '../../services/documentUtils';
 import { X, Plus, Home } from 'lucide-react';
+
+const TAB_LABEL_MAX_CHARS = {
+  wide: { active: 48, inactive: 28 },
+  narrow: { active: 30, inactive: 18 },
+} as const;
 
 interface TabBarProps {
   onRequestCloseTab: (e: React.MouseEvent, tab: TabItem) => void;
@@ -47,6 +53,9 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
       ungroupTabs: state.ungroupTabs,
     }))
   );
+
+  // Responsive char budget for tab labels
+  const isWide = useMediaQuery('(min-width: 768px)');
 
   // Inline Tab Rename State
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
@@ -417,6 +426,8 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
     const isHome = isHomeTab(tab);
     const isDropTarget = dropIndicator?.targetTabId === tab.id;
     const dropPos = isDropTarget ? dropIndicator.position : null;
+    const charLimits = isWide ? TAB_LABEL_MAX_CHARS.wide : TAB_LABEL_MAX_CHARS.narrow;
+    const labelMaxChars = isActive ? charLimits.active : charLimits.inactive;
 
     return (
       <div
@@ -509,11 +520,9 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
             <span>{tab.title}</span>
           </span>
         ) : (
-          <MiddleEllipsisText
-            text={tab.title}
-            showTooltip={false}
-            className="text-[11px] sm:text-xs max-w-[120px] sm:max-w-[180px] md:max-w-[240px]"
-          />
+          <span className="whitespace-pre overflow-hidden text-ellipsis text-[11px] sm:text-xs max-w-[calc(100vw-6rem)]">
+            {abbreviateMiddle(tab.title, labelMaxChars)}
+          </span>
         )}
 
         <button

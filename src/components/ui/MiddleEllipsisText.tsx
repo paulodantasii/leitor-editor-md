@@ -17,8 +17,8 @@ export function MiddleEllipsisText({
       className={`inline-flex min-w-0 max-w-full whitespace-pre ${className}`}
       title={showTooltip ? text : undefined}
     >
-      <span className="min-w-0 truncate">{head}</span>
-      {tail ? <span className="shrink-0">{tail}</span> : null}
+      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-pre">{head}</span>
+      {tail ? <span className="shrink-0 whitespace-pre">{tail}</span> : null}
     </span>
   );
 }

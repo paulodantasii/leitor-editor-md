@@ -202,6 +202,13 @@ export function findActiveHeadingIndexByTops(
 }
 
 /**
+ * Proporção padrão da altura útil de leitura (a partir do topo abaixo das barras fixas)
+ * usada como linha de corte para ativar um título durante a rolagem.
+ * 0.3 a partir do topo equivale a o título ter passado de 70% da altura da área de leitura.
+ */
+export const ACTIVE_HEADING_VIEWPORT_RATIO = 0.3;
+
+/**
  * Calcula a altura total ocupada pelas barras fixas no topo (Header + EditorToolbar se visível).
  */
 export function getStickyTopOffsetPx(): number {
@@ -222,6 +229,32 @@ export function getStickyTopOffsetPx(): number {
   }
 
   return Math.round(headerPx + 14);
+}
+
+/**
+ * Calcula a coordenada Y (relativa à viewport) usada como linha de corte do scroll-spy:
+ * quando o topo de um título sobe acima desse ponto (título passa de 70% da altura da área de leitura
+ * = 30% a partir do topo útil), ele passa a ser detectado como o título ativo.
+ */
+export function computeActiveHeadingThresholdY(
+  stickyTopPx: number,
+  viewportHeightPx: number,
+  ratio: number = ACTIVE_HEADING_VIEWPORT_RATIO
+): number {
+  const clampedRatio = Number.isFinite(ratio)
+    ? Math.min(1, Math.max(0, ratio))
+    : ACTIVE_HEADING_VIEWPORT_RATIO;
+  const readableAreaHeight = Math.max(0, viewportHeightPx - stickyTopPx);
+  return Math.round(stickyTopPx + readableAreaHeight * clampedRatio);
+}
+
+/**
+ * Retorna a linha de corte atual (thresholdY) na janela do navegador para o scroll-spy de títulos.
+ */
+export function getActiveHeadingThresholdY(): number {
+  const stickyTopPx = getStickyTopOffsetPx();
+  if (typeof window === 'undefined') return stickyTopPx + 8;
+  return computeActiveHeadingThresholdY(stickyTopPx, window.innerHeight);
 }
 
 /**

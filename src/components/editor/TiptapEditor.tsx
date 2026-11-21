@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useEditor, EditorContent, Editor, BubbleMenu } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -43,6 +43,7 @@ import {
   extractHeadingsFromMarkdown,
   findActiveHeadingIndexByTops,
   getStickyTopOffsetPx,
+  getActiveHeadingThresholdY,
   getTocSnapshot,
   setTocActiveIndex,
   updateTocState,
@@ -199,6 +200,7 @@ export const TiptapEditor: React.FC = () => {
   const highlightCountDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const tocExtractTimerRef = useRef<NodeJS.Timeout | null>(null);
   const tocScrollRafRef = useRef<number | null>(null);
+  const navigationLockRef = useRef<number | null>(null);
 
   // Estado e refs do Modo Código-Fonte (Markdown puro)
   const [rawContent, setRawContent] = useState<string>(() => useAppStore.getState().document?.content || '');
@@ -211,6 +213,18 @@ export const TiptapEditor: React.FC = () => {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [activeHighlightColor, setActiveHighlightColor] = useState<HighlightColor>('yellow');
   const isPopoverOpenRef = useRef(false);
+  const bubbleTippyRef = useRef<{ hide: () => void } | null>(null);
+
+  const bubbleTippyOptions = useMemo(
+    () => ({
+      duration: 100,
+      zIndex: 20,
+      onCreate: (instance: { hide: () => void }) => {
+        bubbleTippyRef.current = instance;
+      },
+    }),
+    []
+  );
 
   const setPopoverOpen = useCallback((open: boolean) => {
     isPopoverOpenRef.current = open;
@@ -521,7 +535,12 @@ export const TiptapEditor: React.FC = () => {
     (headingsCount: number, precomputedHeadings?: ReadonlyArray<TocHeadingItem>): number => {
       if (headingsCount === 0) return -1;
 
-      const thresholdY = getStickyTopOffsetPx() + 8;
+      const lockedIdx = navigationLockRef.current;
+      if (lockedIdx !== null && lockedIdx >= 0 && lockedIdx < headingsCount) {
+        return lockedIdx;
+      }
+
+      const thresholdY = getActiveHeadingThresholdY();
 
       // Quando em Modo Código-Fonte (textarea visível), mede a posição Y real de cada título no textarea
       if (isSourceModeRef.current && rawTextareaRef.current) {
@@ -1039,6 +1058,27 @@ export const TiptapEditor: React.FC = () => {
     };
   }, [computeActiveHeadingInDom]);
 
+  // Libera a trava da navegação pelo sumário assim que o usuário volta a rolar ou interagir manualmente
+  useEffect(() => {
+    const releaseNavigationLock = () => {
+      if (navigationLockRef.current !== null) {
+        navigationLockRef.current = null;
+      }
+    };
+
+    window.addEventListener('wheel', releaseNavigationLock, { passive: true });
+    window.addEventListener('touchstart', releaseNavigationLock, { passive: true });
+    window.addEventListener('keydown', releaseNavigationLock, { passive: true });
+    window.addEventListener('mousedown', releaseNavigationLock, { passive: true });
+
+    return () => {
+      window.removeEventListener('wheel', releaseNavigationLock);
+      window.removeEventListener('touchstart', releaseNavigationLock);
+      window.removeEventListener('keydown', releaseNavigationLock);
+      window.removeEventListener('mousedown', releaseNavigationLock);
+    };
+  }, []);
+
   // Registra o comando de navegação rápida para um título ao clicar no Sumário (TOC Popover)
   useEffect(() => {
     const unregister = registerNavigateToHeadingHandler((headingIndex: number) => {
@@ -1050,6 +1090,8 @@ export const TiptapEditor: React.FC = () => {
         const mdHeadings = extractHeadingsFromMarkdown(md);
         const target = mdHeadings[headingIndex];
         if (!target) return;
+
+        navigationLockRef.current = headingIndex;
 
         const charPos = target.charOffset ?? 0;
         const textarea = rawTextareaRef.current;
@@ -1080,6 +1122,8 @@ export const TiptapEditor: React.FC = () => {
       const targetEl = domHeadings[headingIndex];
       if (!targetEl) return;
 
+      navigationLockRef.current = headingIndex;
+
       const rect = targetEl.getBoundingClientRect();
       const rawTargetY = rect.top + window.scrollY - stickyOffset - 8;
       const maxScrollY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
@@ -1091,6 +1135,7 @@ export const TiptapEditor: React.FC = () => {
         behavior: 'smooth',
       });
 
+      setTocActiveIndex(headingIndex);
       pulseHeadingElement(targetEl);
     });
 
@@ -1175,7 +1220,72 @@ export const TiptapEditor: React.FC = () => {
 
   // Handle click on marks (activate popover) vs click outside marks (deactivate popover)
   useEffect(() => {
-    // Handler para MOUSE (desktop) — lógica inalterada
+    const resolveMarkColor = (markEl: HTMLElement, tapPos: number): HighlightColor => {
+      const docMarkColor = editor?.state.doc
+        .resolve(tapPos)
+        .marks()
+        .find((m) => m.type.name === 'customHighlight')
+        ?.attrs.color as HighlightColor | undefined;
+      if (docMarkColor) return docMarkColor;
+
+      const dataColor = markEl.getAttribute('data-color') as HighlightColor | null;
+      if (dataColor) return dataColor;
+
+      const classColor = markEl.className.match(/\b(yellow|blue|red|green|purple|orange|gray)\b/)?.[1] as
+        | HighlightColor
+        | undefined;
+      return classColor || 'yellow';
+    };
+
+    const openPopoverForMark = (markEl: HTMLElement, clientX: number, clientY: number): boolean => {
+      if (!editor || editor.isDestroyed) return false;
+
+      try {
+        const textNode = markEl.firstChild || markEl;
+        const start = editor.view.posAtDOM(textNode, 0);
+        if (start < 0 || start >= editor.state.doc.content.size) {
+          return false;
+        }
+
+        const end = start + (markEl.textContent?.length ?? 0);
+        const hit = editor.view.posAtCoords({ left: clientX, top: clientY });
+        const maxPos = Math.max(start + 1, end - 1);
+        const tapPos = hit ? Math.min(Math.max(hit.pos, start + 1), maxPos) : start + 1;
+
+        const clickedId = markEl.getAttribute('data-id');
+        const currentActiveId = editor.getAttributes('customHighlight').id;
+        const currentSel = editor.state.selection;
+
+        const isSameMark =
+          isPopoverOpenRef.current &&
+          ((clickedId && currentActiveId && clickedId === currentActiveId) ||
+            (!clickedId &&
+              !currentActiveId &&
+              currentSel.from >= start - 1 &&
+              currentSel.from <= end + 1 &&
+              editor.isActive('customHighlight')));
+
+        if (isSameMark) {
+          setPopoverOpen(false);
+          editor.commands.setTextSelection(start);
+          window.getSelection()?.removeAllRanges();
+          return true;
+        }
+
+        const clickedColor = resolveMarkColor(markEl, tapPos);
+        lastClickedMarkPosRef.current = start;
+        setActiveHighlightColor(clickedColor);
+        setPopoverOpen(true);
+        editor.commands.setTextSelection(tapPos);
+        return true;
+      } catch (err) {
+        // Fallback caso o DOM do <mark> esteja dessincronizado com o estado do ProseMirror
+        console.debug('Failed to open highlight popover for mark:', err);
+        return false;
+      }
+    };
+
+    // Handler para MOUSE (desktop)
     const handleMouseDown = (e: MouseEvent) => {
       if (!editor || editor.isDestroyed || isEditable) return;
 
@@ -1190,39 +1300,7 @@ export const TiptapEditor: React.FC = () => {
 
       const markEl = target.closest('mark');
       if (markEl && containerRef.current?.contains(markEl)) {
-        try {
-          const textNode = markEl.firstChild || markEl;
-          const pos = editor.view.posAtDOM(textNode, 0);
-          if (pos >= 0 && pos < editor.state.doc.content.size) {
-            const clickedId = markEl.getAttribute('data-id');
-            const currentActiveId = editor.getAttributes('customHighlight').id;
-            const currentSel = editor.state.selection;
-
-            const isSameMark =
-              isPopoverOpenRef.current &&
-              ((clickedId && currentActiveId && clickedId === currentActiveId) ||
-                (!clickedId && !currentActiveId && pos >= currentSel.from - 2 && pos <= currentSel.to + 2 && editor.isActive('customHighlight')));
-
-            if (isSameMark) {
-              setPopoverOpen(false);
-              editor.commands.setTextSelection(pos);
-              window.getSelection()?.removeAllRanges();
-              return;
-            }
-
-            const clickedColor =
-              (markEl.getAttribute('data-color') as HighlightColor) ||
-              (editor.getAttributes('customHighlight').color as HighlightColor) ||
-              'yellow';
-            lastClickedMarkPosRef.current = pos;
-            setActiveHighlightColor(clickedColor);
-            setPopoverOpen(true);
-            editor.commands.setTextSelection(pos + 1);
-            return;
-          }
-        } catch {
-          // fallback
-        }
+        if (openPopoverForMark(markEl, e.clientX, e.clientY)) return;
       }
 
       if (isPopoverOpenRef.current) {
@@ -1265,39 +1343,7 @@ export const TiptapEditor: React.FC = () => {
 
       const markEl = target.closest('mark');
       if (markEl && containerRef.current?.contains(markEl)) {
-        try {
-          const textNode = markEl.firstChild || markEl;
-          const pos = editor.view.posAtDOM(textNode, 0);
-          if (pos >= 0 && pos < editor.state.doc.content.size) {
-            const clickedId = markEl.getAttribute('data-id');
-            const currentActiveId = editor.getAttributes('customHighlight').id;
-            const currentSel = editor.state.selection;
-
-            const isSameMark =
-              isPopoverOpenRef.current &&
-              ((clickedId && currentActiveId && clickedId === currentActiveId) ||
-                (!clickedId && !currentActiveId && pos >= currentSel.from - 2 && pos <= currentSel.to + 2 && editor.isActive('customHighlight')));
-
-            if (isSameMark) {
-              setPopoverOpen(false);
-              editor.commands.setTextSelection(pos);
-              window.getSelection()?.removeAllRanges();
-              return;
-            }
-
-            const clickedColor =
-              (markEl.getAttribute('data-color') as HighlightColor) ||
-              (editor.getAttributes('customHighlight').color as HighlightColor) ||
-              'yellow';
-            lastClickedMarkPosRef.current = pos;
-            setActiveHighlightColor(clickedColor);
-            setPopoverOpen(true);
-            editor.commands.setTextSelection(pos + 1);
-            return;
-          }
-        } catch {
-          // fallback
-        }
+        if (openPopoverForMark(markEl, touch.clientX, touch.clientY)) return;
       }
 
       if (isPopoverOpenRef.current) {
@@ -1315,6 +1361,58 @@ export const TiptapEditor: React.FC = () => {
       document.removeEventListener('touchend', handleTouchEnd);
     };
   }, [editor, isEditable, setPopoverOpen]);
+
+  // Fecha o popover automaticamente ao rolar até o ponto do grifo sair da área visível
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || isEditable || !isPopoverOpen) return;
+
+    let rafId: number | null = null;
+
+    const closeOnScroll = () => {
+      const markStart = lastClickedMarkPosRef.current;
+      setPopoverOpen(false);
+      bubbleTippyRef.current?.hide();
+      window.getSelection()?.removeAllRanges();
+      if (markStart !== null) {
+        editor.commands.setTextSelection(markStart);
+      }
+    };
+
+    const checkVisibilityOnScroll = () => {
+      rafId = null;
+      if (editor.isDestroyed || !isPopoverOpenRef.current) return;
+
+      try {
+        const { from } = editor.state.selection;
+        const coords = editor.view.coordsAtPos(from);
+        const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0;
+        const viewportBottom = window.visualViewport?.height ?? window.innerHeight;
+
+        if (coords.bottom < headerBottom || coords.top > viewportBottom) {
+          closeOnScroll();
+        }
+      } catch (err) {
+        console.debug('Closing highlight popover after scroll visibility check error:', err);
+        closeOnScroll();
+      }
+    };
+
+    const handleScroll = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(checkVisibilityOnScroll);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.visualViewport?.addEventListener('scroll', handleScroll);
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.visualViewport?.removeEventListener('scroll', handleScroll);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, [editor, isEditable, isPopoverOpen, setPopoverOpen]);
 
   // Initial highlight count on mount
   useEffect(() => {
@@ -1545,7 +1643,7 @@ export const TiptapEditor: React.FC = () => {
         {editor && (
           <BubbleMenu 
             editor={editor} 
-            tippyOptions={{ duration: 100 }}
+            tippyOptions={bubbleTippyOptions}
             shouldShow={({ editor }) => isPopoverOpenRef.current && !isEditable && editor.isActive('customHighlight')}
           >
             <HighlightPopover

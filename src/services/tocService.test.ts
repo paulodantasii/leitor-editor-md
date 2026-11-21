@@ -4,6 +4,7 @@ import {
   extractHeadingsFromMarkdown,
   computeBreadcrumbTrail,
   findActiveHeadingIndexByTops,
+  computeActiveHeadingThresholdY,
   areHeadingsEqual,
   updateTocState,
   getTocSnapshot,
@@ -110,6 +111,23 @@ describe('tocService', () => {
       expect(findActiveHeadingIndexByTops(tops, 700)).toBe(1);
       expect(findActiveHeadingIndexByTops(tops, 1100)).toBe(2);
       expect(findActiveHeadingIndexByTops(tops, 2000)).toBe(3);
+    });
+  });
+
+  describe('computeActiveHeadingThresholdY', () => {
+    it('posiciona a linha de corte em 30% da área útil abaixo das barras fixas (70% de altura restante)', () => {
+      expect(computeActiveHeadingThresholdY(100, 900)).toBe(340);
+    });
+
+    it('evita área de leitura negativa quando a viewport é menor que o topo fixo', () => {
+      expect(computeActiveHeadingThresholdY(100, 50)).toBe(100);
+    });
+
+    it('respeita os limites do ratio entre 0 (stickyTop) e 1 (altura da viewport)', () => {
+      expect(computeActiveHeadingThresholdY(100, 900, 0)).toBe(100);
+      expect(computeActiveHeadingThresholdY(100, 900, 1)).toBe(900);
+      expect(computeActiveHeadingThresholdY(100, 900, -0.5)).toBe(100);
+      expect(computeActiveHeadingThresholdY(100, 900, 1.5)).toBe(900);
     });
   });
 
