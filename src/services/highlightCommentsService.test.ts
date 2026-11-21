@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Schema } from '@tiptap/pm/model';
 import {
   HIGHLIGHT_COMMENTS_START_MARKER,
@@ -17,7 +17,10 @@ import {
   extractHighlightTextByIdFromMarkdown,
   formatSingleCommentForCopy,
   extractAllCommentedHighlightsInOrder,
+  findLatestCommentedHighlightId,
   formatAllCommentsForCopy,
+  registerScrollToLatestCommentHandler,
+  requestScrollToLatestComment,
   resetHighlightCommentsMemory,
 } from './highlightCommentsService';
 
@@ -208,5 +211,113 @@ describe('highlightCommentsService', () => {
     expect(getHighlightComment(docId, '00001')).toBe('');
     expect(getHighlightComment(docId, '00002')).toBe('');
     expect(getHighlightComment(docId, '00003')).toBe('Novo código-fonte');
+  });
+
+  it('rastreia o comentário mais recente em ordem cronológica mesmo ao editar grifo antigo e preserva no round-trip', () => {
+    const docId = 'doc-latest-comment';
+    const hl1 = testSchema.marks.customHighlight.create({ color: 'yellow', id: '00001' });
+    const hl2 = testSchema.marks.customHighlight.create({ color: 'blue', id: '00002' });
+    const hl3 = testSchema.marks.customHighlight.create({ color: 'green', id: '00003' });
+
+    const doc = testSchema.node('doc', null, [
+      testSchema.node('paragraph', null, [
+        testSchema.text('Primeiro', [hl1]),
+        testSchema.text(' '),
+        testSchema.text('Segundo', [hl2]),
+        testSchema.text(' '),
+        testSchema.text('Terceiro', [hl3]),
+      ]),
+    ]);
+
+    setHighlightComment(docId, '00001', 'Comentário 1');
+    setHighlightComment(docId, '00003', 'Comentário 3');
+    expect(findLatestCommentedHighlightId(doc, getDocHighlightComments(docId))).toBe('00003');
+
+    // Cria comentário em um grifo antigo no meio do documento -> passa a ser o último comentário
+    setHighlightComment(docId, '00002', 'Comentário 2 posterior');
+    expect(findLatestCommentedHighlightId(doc, getDocHighlightComments(docId))).toBe('00002');
+
+    // Editar um comentário antigo também o move para o fim da fila cronológica
+    setHighlightComment(docId, '00001', 'Comentário 1 atualizado');
+    expect(findLatestCommentedHighlightId(doc, getDocHighlightComments(docId))).toBe('00001');
+
+    // Serializa no rodapé e re-hidrata do Markdown mantendo 00001 por último
+    const body =
+      '<mark class="yellow" data-id="00001">Primeiro</mark> <mark class="blue" data-id="00002">Segundo</mark> <mark class="green" data-id="00003">Terceiro</mark>';
+    const persisted = composeMarkdownWithHighlightComments(
+      body,
+      getDocHighlightComments(docId),
+      collectOrderedHighlightIdsFromProseMirrorDoc(doc)
+    );
+
+    const parsed = parseMarkdownWithHighlightComments(persisted);
+    expect(Array.from(parsed.comments.keys())).toEqual(['00003', '00002', '00001']);
+    expect(findLatestCommentedHighlightId(persisted, parsed.comments)).toBe('00001');
+
+    hydrateDocHighlightComments('doc-reloaded', parsed.comments, true);
+    expect(findLatestCommentedHighlightId(doc, getDocHighlightComments('doc-reloaded'))).toBe('00001');
+
+    // "Copiar todos os comentários" continua obedecendo a ordem de leitura no documento
+    expect(
+      extractAllCommentedHighlightsInOrder(doc, getDocHighlightComments('doc-reloaded')).map(
+        (entry) => entry.id
+      )
+    ).toEqual(['00001', '00002', '00003']);
+  });
+
+  it('recua para o comentário anterior vivo quando o último comentário ou seu grifo é removido', () => {
+    const docId = 'doc-fallback-comment';
+    const hl1 = testSchema.marks.customHighlight.create({ color: 'yellow', id: '00001' });
+    const hl2 = testSchema.marks.customHighlight.create({ color: 'blue', id: '00002' });
+    const hl3 = testSchema.marks.customHighlight.create({ color: 'green', id: '00003' });
+
+    const fullDoc = testSchema.node('doc', null, [
+      testSchema.node('paragraph', null, [
+        testSchema.text('Um', [hl1]),
+        testSchema.text(' '),
+        testSchema.text('Dois', [hl2]),
+        testSchema.text(' '),
+        testSchema.text('Três', [hl3]),
+      ]),
+    ]);
+
+    setHighlightComment(docId, '00001', 'Nota 1');
+    setHighlightComment(docId, '00002', 'Nota 2');
+    setHighlightComment(docId, '00003', 'Nota 3');
+    expect(findLatestCommentedHighlightId(fullDoc, getDocHighlightComments(docId))).toBe('00003');
+
+    // 1. Ao apagar o grifo 00003 do documento (mantendo o histórico de sessão), recua para 00002
+    const docWithout00003 = testSchema.node('doc', null, [
+      testSchema.node('paragraph', null, [
+        testSchema.text('Um', [hl1]),
+        testSchema.text(' '),
+        testSchema.text('Dois', [hl2]),
+      ]),
+    ]);
+    expect(findLatestCommentedHighlightId(docWithout00003, getDocHighlightComments(docId))).toBe(
+      '00002'
+    );
+
+    // 2. Ao excluir explicitamente o comentário 00002, recua para 00001
+    deleteHighlightComment(docId, '00002');
+    expect(findLatestCommentedHighlightId(docWithout00003, getDocHighlightComments(docId))).toBe(
+      '00001'
+    );
+
+    // 3. Ao excluir o último restante, retorna null
+    deleteHighlightComment(docId, '00001');
+    expect(findLatestCommentedHighlightId(docWithout00003, getDocHighlightComments(docId))).toBeNull();
+  });
+
+  it('registra, dispara e limpa corretamente o handler de ir para o último comentário', () => {
+    const handler = vi.fn();
+    const unregister = registerScrollToLatestCommentHandler(handler);
+
+    requestScrollToLatestComment();
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    unregister();
+    requestScrollToLatestComment();
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

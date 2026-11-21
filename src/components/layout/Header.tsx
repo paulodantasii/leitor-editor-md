@@ -23,6 +23,7 @@ import { requestScrollToLatestHighlight } from '../../services/highlightIdServic
 import {
   subscribeActiveCommentCount,
   requestCopyAllComments,
+  requestScrollToLatestComment,
 } from '../../services/highlightCommentsService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveActiveDocument } from '../../services/documentSaveService';
@@ -528,32 +529,44 @@ export const Header: React.FC = () => {
                 )}
 
                 {activeCommentCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleCopyAllHeaderComments}
-                    title={`Copiar todos os comentários (${activeCommentCount})`}
-                    aria-label={`Copiar todos os comentários (${activeCommentCount})`}
-                    className={`h-[26px] px-2 ml-0.5 rounded-lg font-medium text-xs flex items-center gap-1 transition-all shrink-0 cursor-pointer ${
-                      copiedAllComments
-                        ? 'bg-emerald-500 text-white shadow-sm'
-                        : 'bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    {copiedAllComments ? (
-                      <Check className="w-3.5 h-3.5" />
-                    ) : (
-                      <MessageSquareText className="w-3.5 h-3.5" />
-                    )}
-                    <span
-                      className={`px-1 py-[1px] rounded-full text-[10px] leading-tight font-bold ${
+                  <div className="flex items-center gap-0.5 ml-0.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleCopyAllHeaderComments}
+                      title={`Copiar todos os comentários (${activeCommentCount})`}
+                      aria-label={`Copiar todos os comentários (${activeCommentCount})`}
+                      className={`h-[26px] px-2 rounded-l-lg rounded-r-md font-medium text-xs flex items-center gap-1 transition-all shrink-0 cursor-pointer ${
                         copiedAllComments
-                          ? 'bg-emerald-700 text-white'
-                          : 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
+                          ? 'bg-emerald-500 text-white shadow-sm'
+                          : 'bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700'
                       }`}
                     >
-                      {activeCommentCount}
-                    </span>
-                  </button>
+                      {copiedAllComments ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <MessageSquareText className="w-3.5 h-3.5" />
+                      )}
+                      <span
+                        className={`px-1 py-[1px] rounded-full text-[10px] leading-tight font-bold ${
+                          copiedAllComments
+                            ? 'bg-emerald-700 text-white'
+                            : 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
+                        }`}
+                      >
+                        {activeCommentCount}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={requestScrollToLatestComment}
+                      title="Ir para o comentário mais recente (Atalho: tecla K)"
+                      aria-label="Ir para o comentário mais recente"
+                      className="h-[26px] px-2 rounded-r-lg rounded-l-md flex items-center justify-center transition-all shrink-0 cursor-pointer bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-slate-700 hover:text-blue-700 dark:hover:text-blue-300"
+                    >
+                      <LocateFixed className="w-3 h-3" />
+                    </button>
+                  </div>
                 )}
               </div>
 

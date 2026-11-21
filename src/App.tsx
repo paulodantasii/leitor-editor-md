@@ -17,6 +17,10 @@ import { initAutoUpdateListeners } from './services/appUpdateService';
 
 import { HomeScreen } from './components/home/HomeScreen';
 import { requestScrollToLatestHighlight } from './services/highlightIdService';
+import {
+  getActiveCommentCount,
+  requestScrollToLatestComment,
+} from './services/highlightCommentsService';
 
 export const App: React.FC = () => {
   const theme = useAppStore((state) => state.preferences.theme);
@@ -91,37 +95,27 @@ export const App: React.FC = () => {
       // Ignore if combined with modifier keys (Ctrl, Alt, Meta)
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
+      const target = e.target as HTMLElement | null;
+      // Don't trigger if user is typing inside an input, textarea, select or contenteditable area
+      const isTyping =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable ||
+          Boolean(target.closest('[contenteditable="true"]')));
+
+      if (isTyping) return;
+
       if (e.key === 'g' || e.key === 'G') {
-        const target = e.target as HTMLElement | null;
-        // Don't trigger if user is typing inside an input, textarea, select or contenteditable area
-        const isTyping =
-          target &&
-          (target.tagName === 'INPUT' ||
-            target.tagName === 'TEXTAREA' ||
-            target.tagName === 'SELECT' ||
-            target.isContentEditable ||
-            Boolean(target.closest('[contenteditable="true"]')));
-
-        if (!isTyping) {
-          e.preventDefault();
-          toggleHighlightMode();
-        }
-      }
-
-      if (e.key === 'j' || e.key === 'J') {
-        const target = e.target as HTMLElement | null;
-        const isTyping =
-          target &&
-          (target.tagName === 'INPUT' ||
-            target.tagName === 'TEXTAREA' ||
-            target.tagName === 'SELECT' ||
-            target.isContentEditable ||
-            Boolean(target.closest('[contenteditable="true"]')));
-
-        if (!isTyping && useAppStore.getState().highlightCount > 0) {
-          e.preventDefault();
-          requestScrollToLatestHighlight();
-        }
+        e.preventDefault();
+        toggleHighlightMode();
+      } else if ((e.key === 'j' || e.key === 'J') && useAppStore.getState().highlightCount > 0) {
+        e.preventDefault();
+        requestScrollToLatestHighlight();
+      } else if ((e.key === 'k' || e.key === 'K') && getActiveCommentCount() > 0) {
+        e.preventDefault();
+        requestScrollToLatestComment();
       }
     };
 

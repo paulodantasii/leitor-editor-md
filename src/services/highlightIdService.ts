@@ -630,33 +630,34 @@ export function pulseHighlightElements(elements: ReadonlyArray<HTMLElement>): vo
 }
 
 /**
- * Encontra os elementos DOM <mark> do grifo mais recente dentro do container do editor,
+ * Encontra os elementos DOM <mark> pertencentes a um `highlightId` dentro do container do editor,
  * calcula a coordenada vertical confortável na viewport e opcionalmente executa o scroll e o pulso visual.
  */
-export function scrollToLatestHighlightInContainer(
+export function scrollToHighlightByIdInContainer(
   container: HTMLElement | null,
-  editor: any,
-  options?: { behavior?: ScrollBehavior; pulse?: boolean; skipScroll?: boolean }
+  highlightId: string | null | undefined,
+  options?: {
+    behavior?: ScrollBehavior;
+    pulse?: boolean;
+    skipScroll?: boolean;
+    fallbackToLastMark?: boolean;
+  }
 ): number | null {
-  if (typeof window === 'undefined' || !container || !editor || editor.isDestroyed) {
+  if (typeof window === 'undefined' || !container) {
     return null;
   }
 
-  const targetInfo = findLatestHighlightInfo(editor.state?.doc);
-  if (!targetInfo) return null;
+  const allMarks = Array.from(container.querySelectorAll('mark')) as HTMLElement[];
+  if (allMarks.length === 0) return null;
 
   let matchedElements: HTMLElement[] = [];
-
-  if (targetInfo.id) {
-    const allMarks = Array.from(container.querySelectorAll('mark')) as HTMLElement[];
-    matchedElements = allMarks.filter((el) => el.getAttribute('data-id') === targetInfo.id);
+  const cleanId = typeof highlightId === 'string' ? highlightId.trim() : '';
+  if (cleanId) {
+    matchedElements = allMarks.filter((el) => el.getAttribute('data-id') === cleanId);
   }
 
-  if (matchedElements.length === 0) {
-    const allMarks = Array.from(container.querySelectorAll('mark')) as HTMLElement[];
-    if (allMarks.length > 0) {
-      matchedElements = [allMarks[allMarks.length - 1]];
-    }
+  if (matchedElements.length === 0 && options?.fallbackToLastMark) {
+    matchedElements = [allMarks[allMarks.length - 1]];
   }
 
   if (matchedElements.length === 0) return null;
@@ -690,6 +691,28 @@ export function scrollToLatestHighlightInContainer(
   }
 
   return targetScrollY;
+}
+
+/**
+ * Encontra os elementos DOM <mark> do grifo mais recente dentro do container do editor,
+ * calcula a coordenada vertical confortável na viewport e opcionalmente executa o scroll e o pulso visual.
+ */
+export function scrollToLatestHighlightInContainer(
+  container: HTMLElement | null,
+  editor: any,
+  options?: { behavior?: ScrollBehavior; pulse?: boolean; skipScroll?: boolean }
+): number | null {
+  if (typeof window === 'undefined' || !container || !editor || editor.isDestroyed) {
+    return null;
+  }
+
+  const targetInfo = findLatestHighlightInfo(editor.state?.doc);
+  if (!targetInfo) return null;
+
+  return scrollToHighlightByIdInContainer(container, targetInfo.id, {
+    ...options,
+    fallbackToLastMark: true,
+  });
 }
 
 /**

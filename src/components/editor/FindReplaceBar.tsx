@@ -98,7 +98,7 @@ export const FindReplaceBar: React.FC<FindReplaceBarProps> = ({
     return null;
   }
 
-  const topOffsetPx = isEditable && toolbarHeightPx > 0 ? toolbarHeightPx + 12 : 6;
+  const topOffsetPx = isEditable && toolbarHeightPx > 0 ? toolbarHeightPx + 10 : 10;
   const stickyTopCss = `calc(var(--header-height, 4.875rem) + ${topOffsetPx}px)`;
   const hasMatches = matches.length > 0;
   const canReplace = hasMatches && !error;
@@ -170,13 +170,13 @@ export const FindReplaceBar: React.FC<FindReplaceBarProps> = ({
   return (
     <div
       style={{ top: stickyTopCss }}
-      className="sticky z-[25] h-0 overflow-visible w-full flex justify-end pointer-events-none print:hidden"
+      className="sticky z-[25] h-0 overflow-visible w-full flex items-start justify-end px-2 sm:px-3 pointer-events-none print:hidden"
     >
       <div
         data-find-replace-bar
         role="region"
         aria-label="Localizar e substituir no documento"
-        className="pointer-events-auto w-full sm:w-[520px] max-w-full bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700/80 shadow-xl rounded-2xl p-2 flex flex-col gap-1.5 font-sans animate-in fade-in slide-in-from-top-2 duration-150"
+        className="pointer-events-auto h-fit self-start w-full sm:w-[500px] max-w-full bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200/90 dark:border-slate-700 shadow-xl ring-1 ring-slate-900/5 dark:ring-white/10 rounded-xl p-2 flex flex-col gap-1.5 font-sans"
       >
         {/* Linha 1: Localizar + Filtros + Contador + Navegação */}
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-1">

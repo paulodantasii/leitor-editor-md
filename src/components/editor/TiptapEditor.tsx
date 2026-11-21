@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useEditor, EditorContent, Editor, BubbleMenu } from '@tiptap/react';
+import { useEditor, EditorContent, Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Underline from '@tiptap/extension-underline';
@@ -15,17 +15,19 @@ import { mergeAttributes } from '@tiptap/core';
 import TableRow from '@tiptap/extension-table-row';
 import TableHeader from '@tiptap/extension-table-header';
 import TableCell from '@tiptap/extension-table-cell';
-import { TextSelection } from '@tiptap/pm/state';
 
 import { useAppStore } from '../../store/useAppStore';
 import { CustomHighlight } from './CustomHighlight';
-import { HighlightPopover } from './HighlightPopover';
+import { FloatingHighlightPopover } from './FloatingHighlightPopover';
 import { EditorToolbar } from './EditorToolbar';
 import { SearchHighlightExtension } from './SearchHighlightExtension';
 import { FindReplaceBar } from './FindReplaceBar';
 import { SourceSearchBackdrop } from './SourceSearchBackdrop';
 import { useDocumentSearch } from '../../hooks/useDocumentSearch';
-import { HighlightColor } from '../../types';
+import {
+  useHighlightPopoverController,
+  type HighlightPopoverController,
+} from '../../hooks/useHighlightPopoverController';
 import {
   registerEditorFlushHandler,
   markBridgeDirty,
@@ -35,11 +37,10 @@ import {
 import { useTabScrollRestoration } from '../../hooks/useTabScrollRestoration';
 import {
   createHighlightTransaction,
-  ensureHighlightIdAtPos,
-  generateNextHighlightId,
   parseSequentialHighlightId,
   primeHighlightIdScope,
   registerScrollToLatestHighlightHandler,
+  scrollToHighlightByIdInContainer,
   scrollToLatestHighlightInContainer,
   scanHighlightsInMarkdown,
 } from '../../services/highlightIdService';
@@ -50,19 +51,19 @@ import {
   hydrateDocHighlightComments,
   getDocHighlightComments,
   getHighlightComment,
-  setHighlightComment,
-  deleteHighlightComment,
   migrateCommentsOnHighlightOverlap,
   collectOrderedHighlightIdsFromProseMirrorDoc,
   collectOrderedHighlightIdsFromMarkdown,
   extractHighlightTextByIdFromProseMirrorDoc,
   extractAllCommentedHighlightsInOrder,
+  findLatestCommentedHighlightId,
   formatAllCommentsForCopy,
   syncCommentedMarksInDom,
   copyTextToClipboard,
   getActiveCommentCount,
   setActiveCommentCount,
   registerCopyAllCommentsHandler,
+  registerScrollToLatestCommentHandler,
 } from '../../services/highlightCommentsService';
 import {
   TocHeadingItem,
@@ -120,6 +121,30 @@ function countHighlightsInRawMarkdown(markdown: string): number {
   }
 
   return uniqueIds.size + unassignedCount;
+}
+
+/**
+ * Seleciona e rola até a tag <mark> correspondente a um ID no textarea de Modo Código-Fonte.
+ */
+function scrollToMarkIdInSourceTextarea(
+  textarea: HTMLTextAreaElement,
+  markdown: string,
+  targetId: string
+): void {
+  const escapedId = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`<mark\\b[^>]*\\b(?:data-id|data-hl-id|id)=["']${escapedId}["'][^>]*>`, 'i');
+  const match = regex.exec(markdown);
+  if (match && typeof match.index === 'number') {
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(match.index, match.index + match[0].length);
+    const ratio = markdown.length > 0 ? match.index / markdown.length : 0;
+    const rect = textarea.getBoundingClientRect();
+    const estimatedY = Math.max(
+      0,
+      rect.top + window.scrollY + textarea.scrollHeight * ratio - window.innerHeight * 0.3
+    );
+    window.scrollTo({ top: estimatedY, left: 0, behavior: 'smooth' });
+  }
 }
 
 /**
@@ -216,7 +241,6 @@ export const TiptapEditor: React.FC = () => {
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isMouseDownRef = useRef(false);
   const isTouchSelectingRef = useRef(false);
-  const lastClickedMarkPosRef = useRef<number | null>(null);
   const justAppliedHighlightAtRef = useRef<number>(0);
   const cachedDomHeadingsRef = useRef<HTMLElement[]>([]);
   const warmUpCancelRef = useRef<(() => void) | null>(null);
@@ -237,65 +261,9 @@ export const TiptapEditor: React.FC = () => {
   const prevIsSourceModeRef = useRef<boolean>(isSourceMode);
   const isRawDirtyRef = useRef<boolean>(false);
 
-  // State to control popover visibility: only opens on explicit click on a highlight mark
-  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
-  const [activeHighlightColor, setActiveHighlightColor] = useState<HighlightColor>('yellow');
-  const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
-  const [isCommentBoxOpen, setIsCommentBoxOpen] = useState(false);
   const [commentsVersion, setCommentsVersion] = useState(0);
-  const isPopoverOpenRef = useRef(false);
-  const activeHighlightIdRef = useRef<string | null>(null);
-  const isCommentBoxOpenRef = useRef(false);
-  const bubbleTippyRef = useRef<{
-    hide: () => void;
-    show?: () => void;
-    popperInstance?: { update?: () => void } | null;
-  } | null>(null);
-
-  const setPopoverOpen = useCallback((open: boolean) => {
-    isPopoverOpenRef.current = open;
-    if (!open) {
-      lastClickedMarkPosRef.current = null;
-      isCommentBoxOpenRef.current = false;
-      setIsCommentBoxOpen(false);
-      activeHighlightIdRef.current = null;
-      setActiveHighlightId(null);
-      bubbleTippyRef.current?.hide();
-    }
-    setIsPopoverOpen(open);
-  }, []);
-
-  const bubbleTippyOptions = useMemo(
-    () => ({
-      duration: 100,
-      zIndex: 20,
-      interactive: true,
-      maxWidth: 'none',
-      onCreate: (instance: {
-        hide: () => void;
-        show?: () => void;
-        popperInstance?: { update?: () => void } | null;
-      }) => {
-        bubbleTippyRef.current = instance;
-      },
-      onHide: () => {
-        // Impede que o blur ao ocultar teclado virtual no iPad feche o balão de comentário
-        if (isPopoverOpenRef.current && isCommentBoxOpenRef.current) {
-          return false;
-        }
-        if (isPopoverOpenRef.current) {
-          isPopoverOpenRef.current = false;
-          lastClickedMarkPosRef.current = null;
-          isCommentBoxOpenRef.current = false;
-          setIsCommentBoxOpen(false);
-          activeHighlightIdRef.current = null;
-          setActiveHighlightId(null);
-          setIsPopoverOpen(false);
-        }
-      },
-    }),
-    []
-  );
+  // Referência estável ao controlador desacoplado do seletor flutuante de grifos (@see docs/HIGHLIGHT_POPOVER_GOTCHAS.md)
+  const popoverControllerRef = useRef<HighlightPopoverController | null>(null);
 
   // Track global mouse/touch active state to avoid premature auto-highlight while dragging selection
   useEffect(() => {
@@ -503,7 +471,7 @@ export const TiptapEditor: React.FC = () => {
       }
 
       justAppliedHighlightAtRef.current = Date.now();
-      setPopoverOpen(false);
+      popoverControllerRef.current?.closePopover();
       currentEditor.view.dispatch(result.tr);
       window.getSelection()?.removeAllRanges();
       scheduleDebouncedHighlightCount(currentEditor);
@@ -512,7 +480,7 @@ export const TiptapEditor: React.FC = () => {
       }
       return true;
     },
-    [resolveSelectionRange, scheduleDebouncedHighlightCount, scheduleCommentDomSync, setPopoverOpen]
+    [resolveSelectionRange, scheduleDebouncedHighlightCount, scheduleCommentDomSync]
   );
 
   // Initialize Tiptap Editor
@@ -688,7 +656,11 @@ export const TiptapEditor: React.FC = () => {
       markdownDebounceTimerRef.current = null;
 
       // Enquanto o popover de cor/exclusão (sem caixa de comentário aberta) estiver aberto, adia a serialização
-      if (isPopoverOpenRef.current && !isCommentBoxOpenRef.current && hasPendingBridgeChanges()) {
+      const isCompactPopoverOpen = Boolean(
+        popoverControllerRef.current?.isPopoverOpenRef.current &&
+          !popoverControllerRef.current?.isCommentBoxOpenRef.current
+      );
+      if (isCompactPopoverOpen && hasPendingBridgeChanges()) {
         armIdleFlushTimer();
         return;
       }
@@ -697,7 +669,11 @@ export const TiptapEditor: React.FC = () => {
         markdownIdleCallbackRef.current = (window as any).requestIdleCallback(
           () => {
             markdownIdleCallbackRef.current = null;
-            if (isPopoverOpenRef.current && !isCommentBoxOpenRef.current && hasPendingBridgeChanges()) {
+            const stillCompactOpen = Boolean(
+              popoverControllerRef.current?.isPopoverOpenRef.current &&
+                !popoverControllerRef.current?.isCommentBoxOpenRef.current
+            );
+            if (stillCompactOpen && hasPendingBridgeChanges()) {
               armIdleFlushTimer();
               return;
             }
@@ -1009,6 +985,7 @@ export const TiptapEditor: React.FC = () => {
 
       clearPendingContentTimers();
       markBridgeClean();
+      popoverControllerRef.current?.closePopover();
       const parsed = parseMarkdownWithHighlightComments(nextDoc.content);
       hydrateDocHighlightComments(nextDoc.docId, parsed.comments, true);
 
@@ -1095,7 +1072,7 @@ export const TiptapEditor: React.FC = () => {
       const latestMarkdown = useAppStore.getState().document?.content ?? '';
       rawContentRef.current = latestMarkdown;
       setRawContent(latestMarkdown);
-      setPopoverOpen(false);
+      popoverControllerRef.current?.closePopover();
 
       const raf1 = requestAnimationFrame(() => {
         const el = rawTextareaRef.current;
@@ -1186,7 +1163,6 @@ export const TiptapEditor: React.FC = () => {
     isSourceMode,
     editor,
     flushContent,
-    setPopoverOpen,
     updateHighlightCount,
     refreshTocStructure,
     captureCurrentScrollAnchorSnapshot,
@@ -1267,28 +1243,49 @@ export const TiptapEditor: React.FC = () => {
   // Registra o comando de rolar até o grifo mais recente (acionado pelo Header ou tecla J)
   useEffect(() => {
     const unregister = registerScrollToLatestHighlightHandler(() => {
+      popoverControllerRef.current?.closePopover();
       if (isSourceModeRef.current && rawTextareaRef.current) {
         const md = rawContentRef.current;
         const summary = scanHighlightsInMarkdown(md);
         const targetId = summary.latestSequentialId || summary.latestLegacyId;
         if (!targetId) return;
 
-        const escapedId = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`<mark\\b[^>]*\\b(?:data-id|data-hl-id|id)=["']${escapedId}["'][^>]*>`, 'i');
-        const match = regex.exec(md);
-        if (match && typeof match.index === 'number') {
-          const textarea = rawTextareaRef.current;
-          textarea.focus({ preventScroll: true });
-          textarea.setSelectionRange(match.index, match.index + match[0].length);
-          const ratio = md.length > 0 ? match.index / md.length : 0;
-          const rect = textarea.getBoundingClientRect();
-          const estimatedY = Math.max(0, rect.top + window.scrollY + textarea.scrollHeight * ratio - window.innerHeight * 0.3);
-          window.scrollTo({ top: estimatedY, left: 0, behavior: 'smooth' });
-        }
+        scrollToMarkIdInSourceTextarea(rawTextareaRef.current, md, targetId);
         return;
       }
 
       scrollToLatestHighlightInContainer(containerRef.current, editorRef.current, {
+        behavior: 'smooth',
+        pulse: true,
+      });
+    });
+
+    return unregister;
+  }, []);
+
+  // Registra o comando de rolar até o comentário mais recente (acionado pelo Header ou tecla K)
+  useEffect(() => {
+    const unregister = registerScrollToLatestCommentHandler(() => {
+      popoverControllerRef.current?.closePopover();
+      if (isSourceModeRef.current && rawTextareaRef.current) {
+        const md = rawContentRef.current;
+        const parsed = parseMarkdownWithHighlightComments(md);
+        const targetId = findLatestCommentedHighlightId(md, parsed.comments);
+        if (!targetId) return;
+
+        scrollToMarkIdInSourceTextarea(rawTextareaRef.current, md, targetId);
+        return;
+      }
+
+      const currentEditor = editorRef.current;
+      if (!currentEditor || currentEditor.isDestroyed) return;
+
+      const currentDocId = useAppStore.getState().document?.docId;
+      const commentsMap = getDocHighlightComments(currentDocId);
+      const targetId = findLatestCommentedHighlightId(currentEditor.state.doc, commentsMap);
+      if (!targetId) return;
+
+      scrollToHighlightByIdInContainer(containerRef.current, targetId, {
         behavior: 'smooth',
         pulse: true,
       });
@@ -1346,6 +1343,7 @@ export const TiptapEditor: React.FC = () => {
   // Registra o comando de navegação rápida para um título ao clicar no Sumário (TOC Popover)
   useEffect(() => {
     const unregister = registerNavigateToHeadingHandler((headingIndex: number) => {
+      popoverControllerRef.current?.closePopover();
       const stickyOffset = getStickyTopOffsetPx();
 
       // Caso 1: Modo Código-Fonte (textarea)
@@ -1410,11 +1408,8 @@ export const TiptapEditor: React.FC = () => {
   useEffect(() => {
     if (editor) {
       editor.setEditable(isEditable, false);
-      if (isEditable) {
-        setPopoverOpen(false);
-      }
     }
-  }, [isEditable, editor, setPopoverOpen]);
+  }, [isEditable, editor]);
 
   // Handle native selection in Highlight mode & iPad context menu suppression
   useEffect(() => {
@@ -1464,270 +1459,29 @@ export const TiptapEditor: React.FC = () => {
     };
   }, [editor, isHighlightMode, isEditable, resolveSelectionRange, applyHighlightFromCurrentSelection]);
 
-  // Ref to debounce touch and mouse events on mobile/iPad
-  const lastPointerDownTimeRef = useRef(0);
-  const mouseDownXRef = useRef(0);
-  const mouseDownYRef = useRef(0);
-  const touchStartXRef = useRef(0);
-  const touchStartYRef = useRef(0);
+  const handleCommentsVersionBump = useCallback(() => {
+    setCommentsVersion((v) => v + 1);
+  }, []);
 
-  // Handle click on marks (activate popover) vs click outside marks (deactivate popover)
-  useEffect(() => {
-    const resolveMarkColor = (markEl: HTMLElement, tapPos: number): HighlightColor => {
-      const docMarkColor = editor?.state.doc
-        .resolve(tapPos)
-        .marks()
-        .find((m) => m.type.name === 'customHighlight')
-        ?.attrs.color as HighlightColor | undefined;
-      if (docMarkColor) return docMarkColor;
+  const handleScheduleDebouncedContentFromPopover = useCallback(() => {
+    scheduleDebouncedContentRef.current();
+  }, []);
 
-      const dataColor = markEl.getAttribute('data-color') as HighlightColor | null;
-      if (dataColor) return dataColor;
-
-      const classColor = markEl.className.match(/\b(yellow|blue|red|green|purple|orange|gray)\b/)?.[1] as
-        | HighlightColor
-        | undefined;
-      return classColor || 'yellow';
-    };
-
-    const openPopoverForMark = (markEl: HTMLElement, clientX: number, clientY: number): boolean => {
-      if (!editor || editor.isDestroyed) return false;
-
-      try {
-        const textNode = markEl.firstChild || markEl;
-        const start = editor.view.posAtDOM(textNode, 0);
-        if (start < 0 || start >= editor.state.doc.content.size) {
-          return false;
-        }
-
-        const end = start + (markEl.textContent?.length ?? 0);
-        const hit = editor.view.posAtCoords({ left: clientX, top: clientY });
-        const maxPos = Math.max(start + 1, end - 1);
-        const tapPos = hit ? Math.min(Math.max(hit.pos, start + 1), maxPos) : start + 1;
-
-        const clickedId = markEl.getAttribute('data-id');
-        const currentActiveId = editor.getAttributes('customHighlight').id;
-        const currentSel = editor.state.selection;
-
-        const isSameMark =
-          isPopoverOpenRef.current &&
-          ((clickedId && currentActiveId && clickedId === currentActiveId) ||
-            (!clickedId &&
-              !currentActiveId &&
-              currentSel.from >= start - 1 &&
-              currentSel.from <= end + 1 &&
-              editor.isActive('customHighlight')));
-
-        if (isSameMark) {
-          setPopoverOpen(false);
-          editor.commands.setTextSelection(start);
-          window.getSelection()?.removeAllRanges();
-          return true;
-        }
-
-        const clickedColor = resolveMarkColor(markEl, tapPos);
-        const docMarkId = editor.state.doc
-          .resolve(tapPos)
-          .marks()
-          .find((m) => m.type.name === 'customHighlight')
-          ?.attrs?.id;
-        const resolvedId =
-          (typeof clickedId === 'string' && clickedId.trim()) ||
-          (typeof docMarkId === 'string' && docMarkId.trim()) ||
-          null;
-        const prevFrom = currentSel.from;
-        const prevTo = currentSel.to;
-
-        isCommentBoxOpenRef.current = false;
-        setIsCommentBoxOpen(false);
-        activeHighlightIdRef.current = resolvedId;
-        setActiveHighlightId(resolvedId);
-        lastClickedMarkPosRef.current = start;
-        setActiveHighlightColor(clickedColor);
-        setPopoverOpen(true);
-        editor.commands.setTextSelection(tapPos);
-        if (prevFrom === tapPos && prevTo === tapPos) {
-          requestAnimationFrame(() => {
-            if (isPopoverOpenRef.current) {
-              bubbleTippyRef.current?.show?.();
-            }
-          });
-        }
-        return true;
-      } catch (err) {
-        // Fallback caso o DOM do <mark> esteja dessincronizado com o estado do ProseMirror
-        console.debug('Failed to open highlight popover for mark:', err);
-        return false;
-      }
-    };
-
-    // Handler para MOUSE (desktop) - fase 1: registra coordenadas e fecha popover se clicar fora de <mark>
-    const handleMouseDown = (e: MouseEvent) => {
-      if (!editor || editor.isDestroyed || isEditable) return;
-
-      const now = Date.now();
-      // Guard: ignora mousedown sintético gerado logo após touchend (400ms)
-      if (now - lastPointerDownTimeRef.current < 400) return;
-
-      mouseDownXRef.current = e.clientX;
-      mouseDownYRef.current = e.clientY;
-
-      const target = e.target as HTMLElement;
-      if (!target) return;
-
-      if (target.closest('[data-highlight-popover]')) return;
-
-      const markEl = target.closest('mark');
-      if (markEl && containerRef.current?.contains(markEl)) {
-        return;
-      }
-
-      if (isPopoverOpenRef.current) {
-        setPopoverOpen(false);
-        window.getSelection()?.removeAllRanges();
-      }
-    };
-
-    // Handler para MOUSE (desktop) - fase 2: abre popover apenas em clique simples (sem arraste/seleção)
-    const handleMouseUp = (e: MouseEvent) => {
-      if (!editor || editor.isDestroyed || isEditable) return;
-
-      const now = Date.now();
-      if (now - lastPointerDownTimeRef.current < 400) return;
-      if (now - justAppliedHighlightAtRef.current < 250) return;
-
-      const deltaX = e.clientX - mouseDownXRef.current;
-      const deltaY = e.clientY - mouseDownYRef.current;
-      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-      if (distance > 5) return;
-
-      const domSel = typeof window !== 'undefined' ? window.getSelection() : null;
-      if (!editor.state.selection.empty || (domSel && !domSel.isCollapsed)) return;
-
-      const target = e.target as HTMLElement;
-      if (!target) return;
-
-      if (target.closest('[data-highlight-popover]')) return;
-
-      const markEl = target.closest('mark');
-      if (markEl && containerRef.current?.contains(markEl)) {
-        openPopoverForMark(markEl, e.clientX, e.clientY);
-      }
-    };
-
-    // Handler TOUCH FASE 1: apenas grava coordenadas e timestamp, NÃO abre popover
-    const handleTouchStart = (e: TouchEvent) => {
-      if (!editor || editor.isDestroyed || isEditable) return;
-      const touch = e.touches[0];
-      if (!touch) return;
-      lastPointerDownTimeRef.current = Date.now();
-      touchStartXRef.current = touch.clientX;
-      touchStartYRef.current = touch.clientY;
-    };
-
-    // Handler TOUCH FASE 2: decide se foi tap válido com base em deslocamento e duração
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (!editor || editor.isDestroyed || isEditable) return;
-      if (Date.now() - justAppliedHighlightAtRef.current < 250) return;
-
-      const touch = e.changedTouches[0];
-      if (!touch) return;
-
-      const deltaX = touch.clientX - touchStartXRef.current;
-      const deltaY = touch.clientY - touchStartYRef.current;
-      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-      const duration = Date.now() - lastPointerDownTimeRef.current;
-
-      // Cancela se o dedo se moveu mais que 10px (scroll/drag) ou levou mais de 500ms (long-press)
-      const TAP_MOVE_THRESHOLD = 10;
-      const TAP_DURATION_MAX = 500;
-      if (distance > TAP_MOVE_THRESHOLD || duration > TAP_DURATION_MAX) return;
-
-      const domSel = typeof window !== 'undefined' ? window.getSelection() : null;
-      if (!editor.state.selection.empty || (domSel && !domSel.isCollapsed)) return;
-
-      const target = e.target as HTMLElement;
-      if (!target) return;
-
-      if (target.closest('[data-highlight-popover]')) return;
-
-      const markEl = target.closest('mark');
-      if (markEl && containerRef.current?.contains(markEl)) {
-        if (openPopoverForMark(markEl, touch.clientX, touch.clientY)) return;
-      }
-
-      if (isPopoverOpenRef.current) {
-        setPopoverOpen(false);
-        window.getSelection()?.removeAllRanges();
-      }
-    };
-
-    document.addEventListener('mousedown', handleMouseDown);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('touchstart', handleTouchStart, { passive: true });
-    document.addEventListener('touchend', handleTouchEnd);
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.removeEventListener('touchstart', handleTouchStart);
-      document.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [editor, isEditable, setPopoverOpen]);
-
-  // Fecha o popover automaticamente ao rolar até o ponto do grifo sair da área visível
-  useEffect(() => {
-    if (!editor || editor.isDestroyed || isEditable || !isPopoverOpen) return;
-
-    let rafId: number | null = null;
-
-    const closeOnScroll = () => {
-      const markStart = lastClickedMarkPosRef.current;
-      setPopoverOpen(false);
-      bubbleTippyRef.current?.hide();
-      window.getSelection()?.removeAllRanges();
-      if (markStart !== null) {
-        editor.commands.setTextSelection(markStart);
-      }
-    };
-
-    const checkVisibilityOnScroll = () => {
-      rafId = null;
-      if (editor.isDestroyed || !isPopoverOpenRef.current) return;
-      // Trava inteligente: mantém o balão aberto se a caixa de comentário estiver aberta/focada
-      // (protege contra abertura de teclado virtual no iPad/celular ou expansão da caixa de texto)
-      if (isCommentBoxOpenRef.current) return;
-
-      try {
-        const { from } = editor.state.selection;
-        const coords = editor.view.coordsAtPos(from);
-        const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? 0;
-        const viewportBottom = window.visualViewport?.height ?? window.innerHeight;
-
-        if (coords.bottom < headerBottom || coords.top > viewportBottom) {
-          closeOnScroll();
-        }
-      } catch (err) {
-        console.debug('Closing highlight popover after scroll visibility check error:', err);
-        closeOnScroll();
-      }
-    };
-
-    const handleScroll = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(checkVisibilityOnScroll);
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.visualViewport?.addEventListener('scroll', handleScroll);
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.visualViewport?.removeEventListener('scroll', handleScroll);
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
-    };
-  }, [editor, isEditable, isPopoverOpen, setPopoverOpen]);
+  // Controlador independente do seletor flutuante (substitui BubbleMenu/Tippy — @see docs/HIGHLIGHT_POPOVER_GOTCHAS.md)
+  const popoverController = useHighlightPopoverController({
+    editor,
+    containerRef,
+    docId,
+    isEditable,
+    isSourceMode,
+    justAppliedHighlightAtRef,
+    highlightTimeoutRef,
+    onCommentsVersionBump: handleCommentsVersionBump,
+    onScheduleDebouncedContent: handleScheduleDebouncedContentFromPopover,
+    onScheduleCommentDomSync: scheduleCommentDomSync,
+    onScheduleDebouncedHighlightCount: scheduleDebouncedHighlightCount,
+  });
+  popoverControllerRef.current = popoverController;
 
   // Initial highlight count on mount
   useEffect(() => {
@@ -1740,15 +1494,6 @@ export const TiptapEditor: React.FC = () => {
   useEffect(() => {
     syncCommentVisualsAndCount(editor);
   }, [editor, docId, commentsVersion, isSourceMode, syncCommentVisualsAndCount]);
-
-  // Reposiciona o BubbleMenu quando o balão de comentário abre/expande
-  useEffect(() => {
-    if (!isPopoverOpen) return;
-    const rafId = requestAnimationFrame(() => {
-      bubbleTippyRef.current?.popperInstance?.update?.();
-    });
-    return () => cancelAnimationFrame(rafId);
-  }, [isPopoverOpen, isCommentBoxOpen, commentsVersion]);
 
   const handleCopyAllComments = useCallback(async (): Promise<number> => {
     const currentDocId = useAppStore.getState().document?.docId;
@@ -1778,209 +1523,6 @@ export const TiptapEditor: React.FC = () => {
   useEffect(() => {
     return registerCopyAllCommentsHandler(handleCopyAllComments);
   }, [handleCopyAllComments]);
-
-  const handleTogglePopoverComment = useCallback(() => {
-    if (!editor || editor.isDestroyed) return;
-    let targetId = activeHighlightIdRef.current;
-
-    if (!targetId) {
-      const pos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
-      const ensured = ensureHighlightIdAtPos(
-        editor.state,
-        pos,
-        useAppStore.getState().document?.docId
-      );
-      if (!ensured) return;
-
-      if (ensured.tr) {
-        editor.view.dispatch(ensured.tr);
-        scheduleDebouncedContentRef.current();
-      }
-      targetId = ensured.id;
-      activeHighlightIdRef.current = targetId;
-      setActiveHighlightId(targetId);
-    }
-
-    const nextOpen = !isCommentBoxOpenRef.current;
-    isCommentBoxOpenRef.current = nextOpen;
-    setIsCommentBoxOpen(nextOpen);
-  }, [editor]);
-
-  const handleChangePopoverComment = useCallback((nextComment: string) => {
-    const targetId = activeHighlightIdRef.current;
-    const currentDocId = useAppStore.getState().document?.docId;
-    if (!targetId) return;
-
-    setHighlightComment(currentDocId, targetId, nextComment);
-    setCommentsVersion((v) => v + 1);
-    scheduleDebouncedContentRef.current();
-  }, []);
-
-  const handleDeletePopoverComment = useCallback(() => {
-    const targetId = activeHighlightIdRef.current;
-    const currentDocId = useAppStore.getState().document?.docId;
-    if (!targetId) return;
-
-    deleteHighlightComment(currentDocId, targetId);
-    setCommentsVersion((v) => v + 1);
-    scheduleDebouncedContentRef.current();
-  }, []);
-
-  const handleSelectColor = (color: HighlightColor) => {
-    if (!editor) return;
-
-    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-    const centerPos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
-    const attrs = editor.getAttributes('customHighlight');
-    const existingId = activeHighlightIdRef.current || attrs.id;
-    const { from, to } = editor.state.selection;
-    setActiveHighlightColor(color);
-    setPopoverOpen(false);
-
-    if (existingId) {
-      const { tr } = editor.state;
-      let modified = false;
-      let hitNarrowEdge = false;
-
-      // Janela curta O(1) ao redor do <mark> clicado antes de expandir
-      const narrowFrom = Math.max(0, centerPos - 1200);
-      const narrowTo = Math.min(tr.doc.content.size, Math.max(to, centerPos) + 1200);
-
-      tr.doc.nodesBetween(narrowFrom, narrowTo, (node, pos) => {
-        if (!node.isText) return;
-        const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
-        if (mark) {
-          tr.removeMark(pos, pos + node.nodeSize, mark.type);
-          const newMark = mark.type.create({ ...mark.attrs, color });
-          tr.addMark(pos, pos + node.nodeSize, newMark);
-          modified = true;
-          if (pos <= narrowFrom || pos + node.nodeSize >= narrowTo) {
-            hitNarrowEdge = true;
-          }
-        }
-      });
-
-      // Fallback para janela de 10000 chars caso o grifo ultrapasse a janela curta
-      if (!modified || hitNarrowEdge) {
-        const searchFrom = Math.max(0, from - 5000);
-        const searchTo = Math.min(tr.doc.content.size, to + 5000);
-
-        tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
-          if (!node.isText) return;
-          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
-          if (mark && mark.attrs.color !== color) {
-            tr.removeMark(pos, pos + node.nodeSize, mark.type);
-            const newMark = mark.type.create({ ...mark.attrs, color });
-            tr.addMark(pos, pos + node.nodeSize, newMark);
-            modified = true;
-          }
-        });
-      }
-
-      // Defensive fallback if mark spanned beyond 5000 chars
-      if (!modified) {
-        tr.doc.descendants((node, pos) => {
-          if (!node.isText) return;
-          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
-          if (mark) {
-            tr.removeMark(pos, pos + node.nodeSize, mark.type);
-            const newMark = mark.type.create({ ...mark.attrs, color });
-            tr.addMark(pos, pos + node.nodeSize, newMark);
-            modified = true;
-          }
-        });
-      }
-
-      const safePos = Math.min(to, tr.doc.content.size);
-      tr.setSelection(TextSelection.create(tr.doc, safePos));
-      editor.view.dispatch(tr);
-    } else {
-      const newId = generateNextHighlightId(
-        editor.state.doc,
-        useAppStore.getState().document?.docId
-      );
-      editor
-        .chain()
-        .setCustomHighlight({ color, id: newId })
-        .setTextSelection(to)
-        .run();
-    }
-
-    window.getSelection()?.removeAllRanges();
-    scheduleCommentDomSync(editor);
-    // Color change does not alter count; no recounting needed
-  };
-
-  const handleRemoveHighlight = () => {
-    if (!editor) return;
-
-    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-    const centerPos = lastClickedMarkPosRef.current ?? editor.state.selection.from;
-    const attrs = editor.getAttributes('customHighlight');
-    const existingId = activeHighlightIdRef.current || attrs.id;
-    const { from, to } = editor.state.selection;
-    setPopoverOpen(false);
-
-    if (existingId) {
-      const { tr } = editor.state;
-      let modified = false;
-      let hitNarrowEdge = false;
-
-      const narrowFrom = Math.max(0, centerPos - 1200);
-      const narrowTo = Math.min(tr.doc.content.size, Math.max(to, centerPos) + 1200);
-
-      tr.doc.nodesBetween(narrowFrom, narrowTo, (node, pos) => {
-        if (!node.isText) return;
-        const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
-        if (mark) {
-          tr.removeMark(pos, pos + node.nodeSize, mark.type);
-          modified = true;
-          if (pos <= narrowFrom || pos + node.nodeSize >= narrowTo) {
-            hitNarrowEdge = true;
-          }
-        }
-      });
-
-      if (!modified || hitNarrowEdge) {
-        const searchFrom = Math.max(0, from - 5000);
-        const searchTo = Math.min(tr.doc.content.size, to + 5000);
-
-        tr.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
-          if (!node.isText) return;
-          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
-          if (mark) {
-            tr.removeMark(pos, pos + node.nodeSize, mark.type);
-            modified = true;
-          }
-        });
-      }
-
-      if (!modified) {
-        tr.doc.descendants((node, pos) => {
-          if (!node.isText) return;
-          const mark = node.marks.find(m => m.type.name === 'customHighlight' && m.attrs.id === existingId);
-          if (mark) {
-            tr.removeMark(pos, pos + node.nodeSize, mark.type);
-            modified = true;
-          }
-        });
-      }
-
-      const safePos = Math.min(to, tr.doc.content.size);
-      tr.setSelection(TextSelection.create(tr.doc, safePos));
-      editor.view.dispatch(tr);
-    } else {
-      editor
-        .chain()
-        .unsetCustomHighlight()
-        .setTextSelection(to)
-        .run();
-    }
-
-    window.getSelection()?.removeAllRanges();
-    scheduleCommentDomSync(editor);
-    scheduleDebouncedHighlightCount(editor);
-  };
 
   const handleRawTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextValue = e.target.value;
@@ -2029,13 +1571,19 @@ export const TiptapEditor: React.FC = () => {
   };
 
   const showSourceEditor = isEditable && isSourceMode;
+  const activePopover = popoverController.activePopover;
+  const activeHighlightId = activePopover?.highlightId ?? null;
   const activeHighlightComment =
-    isPopoverOpen && activeHighlightId ? getHighlightComment(docId, activeHighlightId) : '';
+    activePopover && activeHighlightId ? getHighlightComment(docId, activeHighlightId) : '';
   const activeHighlightedText =
-    isPopoverOpen && activeHighlightId && editor && !editor.isDestroyed
+    activePopover && activeHighlightId && editor && !editor.isDestroyed
       ? extractHighlightTextByIdFromProseMirrorDoc(editor.state.doc, activeHighlightId)
       : '';
-  const activeCommentsTotal = isPopoverOpen ? getActiveCommentCount() : 0;
+  const activeCommentsTotal = activePopover ? getActiveCommentCount() : 0;
+  const popoverAnchorKey = activePopover
+    ? `${activePopover.highlightId ?? 'legacy'}:${activePopover.anchorPos}:${activePopover.isCommentOpen ? 1 : 0}`
+    : '';
+  const popoverLayoutTriggerKey = `${preferences.fontSize}-${preferences.fontFamily}-${preferences.textWidth}-${commentsVersion}`;
 
   return (
     <div className="w-full flex flex-col items-center py-4 px-4 sm:px-6 print:p-0 print:m-0 print:w-full">
@@ -2084,32 +1632,25 @@ export const TiptapEditor: React.FC = () => {
           onClose={documentSearch.onClose}
         />
 
-        {editor && (
-          <BubbleMenu 
-            editor={editor} 
-            tippyOptions={bubbleTippyOptions}
-            shouldShow={({ editor }) =>
-              isPopoverOpenRef.current &&
-              !isEditable &&
-              (editor.isActive('customHighlight') || isCommentBoxOpenRef.current)
-            }
-          >
-            <HighlightPopover
-              activeColor={activeHighlightColor}
-              onSelectColor={handleSelectColor}
-              onRemoveHighlight={handleRemoveHighlight}
-              onClose={() => setPopoverOpen(false)}
-              commentText={activeHighlightComment}
-              highlightedText={activeHighlightedText}
-              totalCommentsCount={activeCommentsTotal}
-              isCommentOpen={isCommentBoxOpen}
-              onToggleComment={handleTogglePopoverComment}
-              onChangeComment={handleChangePopoverComment}
-              onDeleteComment={handleDeletePopoverComment}
-              onCopyAllComments={handleCopyAllComments}
-            />
-          </BubbleMenu>
-        )}
+        <FloatingHighlightPopover
+          isOpen={Boolean(activePopover && !isEditable && !isSourceMode && editor)}
+          anchorKey={popoverAnchorKey}
+          layoutTriggerKey={popoverLayoutTriggerKey}
+          activeColor={activePopover?.color}
+          isCommentOpen={activePopover?.isCommentOpen ?? false}
+          getAnchorViewportRect={popoverController.getAnchorViewportRect}
+          onAutoClose={popoverController.closePopover}
+          onSelectColor={popoverController.handleSelectColor}
+          onRemoveHighlight={popoverController.handleRemoveHighlight}
+          onClose={popoverController.closePopover}
+          commentText={activeHighlightComment}
+          highlightedText={activeHighlightedText}
+          totalCommentsCount={activeCommentsTotal}
+          onToggleComment={popoverController.handleToggleComment}
+          onChangeComment={popoverController.handleChangeComment}
+          onDeleteComment={popoverController.handleDeleteComment}
+          onCopyAllComments={handleCopyAllComments}
+        />
 
         {showSourceEditor && (
           <div className="bg-white dark:bg-slate-800/90 shadow-sm border border-blue-300 dark:border-blue-700/70 rounded-xl p-4 sm:p-10 min-h-[75vh] max-w-full print:hidden">

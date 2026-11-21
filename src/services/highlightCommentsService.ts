@@ -28,6 +28,8 @@ let activeCommentCountSnapshot = 0;
 let activeCommentCountListeners: ReadonlyArray<(count: number) => void> = [];
 type CopyAllCommentsHandler = () => Promise<number> | number;
 let registeredCopyAllCommentsHandler: CopyAllCommentsHandler | null = null;
+type ScrollToLatestCommentHandler = () => void;
+let registeredScrollToLatestCommentHandler: ScrollToLatestCommentHandler | null = null;
 
 export interface ParsedMarkdownCommentsResult {
   readonly bodyMarkdown: string;
@@ -207,29 +209,18 @@ export function composeMarkdownWithHighlightComments(
   const { bodyMarkdown: cleanBody } = parseMarkdownWithHighlightComments(bodyMarkdown || '');
 
   const orderedEntries: Array<[string, string]> = [];
+  const activeSet = activeHighlightIds ? new Set(activeHighlightIds) : null;
 
-  if (activeHighlightIds) {
-    const seen = new Set<string>();
-    const activeList = Array.isArray(activeHighlightIds)
-      ? activeHighlightIds
-      : Array.from(activeHighlightIds);
-
-    for (let i = 0; i < activeList.length; i++) {
-      const id = activeList[i];
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      const comment = commentsMap.get(id);
-      if (typeof comment === 'string' && comment.trim().length > 0) {
-        orderedEntries.push([id, normalizeNewlines(comment).replace(/\n+$/, '')]);
-      }
+  commentsMap.forEach((comment, id) => {
+    if (
+      id &&
+      (!activeSet || activeSet.has(id)) &&
+      typeof comment === 'string' &&
+      comment.trim().length > 0
+    ) {
+      orderedEntries.push([id, normalizeNewlines(comment).replace(/\n+$/, '')]);
     }
-  } else {
-    commentsMap.forEach((comment, id) => {
-      if (id && typeof comment === 'string' && comment.trim().length > 0) {
-        orderedEntries.push([id, normalizeNewlines(comment).replace(/\n+$/, '')]);
-      }
-    });
-  }
+  });
 
   if (orderedEntries.length === 0) {
     return cleanBody;
@@ -279,6 +270,7 @@ export function hydrateDocHighlightComments(
   parsedComments.forEach((comment, id) => {
     const cleanId = typeof id === 'string' ? id.trim() : '';
     if (cleanId && typeof comment === 'string' && comment.trim().length > 0) {
+      nextDocMap.delete(cleanId);
       nextDocMap.set(cleanId, normalizeNewlines(comment));
     }
   });
@@ -322,6 +314,7 @@ export function setHighlightComment(
   if (commentText.trim().length === 0) {
     nextDocMap.delete(cleanId);
   } else {
+    nextDocMap.delete(cleanId);
     nextDocMap.set(cleanId, normalizeNewlines(commentText));
   }
 
@@ -407,6 +400,7 @@ export function migrateCommentsOnHighlightOverlap(
   for (let i = 0; i < idsToDelete.length; i++) {
     nextDocMap.delete(idsToDelete[i]);
   }
+  nextDocMap.delete(cleanNewId);
   nextDocMap.set(cleanNewId, collectedComments.join('\n\n'));
 
   commentsByDocScope = new Map([
@@ -565,6 +559,42 @@ export function formatSingleCommentForCopy(
   const cleanHighlight = normalizeQuotedHighlightText(highlightText);
   const cleanComment = commentText.trim();
   return `Sobre "${cleanHighlight}": ${cleanComment}`;
+}
+
+/**
+ * Localiza o ID do grifo comentado mais recente (último criado ou editado) que ainda está vivo no documento.
+ */
+export function findLatestCommentedHighlightId(
+  docOrMarkdown: any,
+  commentsMap: ReadonlyMap<string, string>
+): string | null {
+  if (!docOrMarkdown || !commentsMap || commentsMap.size === 0) return null;
+
+  let liveIds: string[];
+  if (typeof docOrMarkdown === 'string') {
+    const { bodyMarkdown } = parseMarkdownWithHighlightComments(docOrMarkdown);
+    liveIds = collectOrderedHighlightIdsFromMarkdown(bodyMarkdown);
+  } else {
+    liveIds = collectOrderedHighlightIdsFromProseMirrorDoc(docOrMarkdown);
+  }
+
+  if (liveIds.length === 0) return null;
+  const liveIdSet = new Set(liveIds);
+
+  let latestId: string | null = null;
+  commentsMap.forEach((comment, id) => {
+    const cleanId = typeof id === 'string' ? id.trim() : '';
+    if (
+      cleanId &&
+      liveIdSet.has(cleanId) &&
+      typeof comment === 'string' &&
+      comment.trim().length > 0
+    ) {
+      latestId = cleanId;
+    }
+  });
+
+  return latestId;
 }
 
 /**
@@ -736,6 +766,23 @@ export async function requestCopyAllComments(): Promise<number> {
   return await registeredCopyAllCommentsHandler();
 }
 
+export function registerScrollToLatestCommentHandler(
+  handler: ScrollToLatestCommentHandler
+): () => void {
+  registeredScrollToLatestCommentHandler = handler;
+  return () => {
+    if (registeredScrollToLatestCommentHandler === handler) {
+      registeredScrollToLatestCommentHandler = null;
+    }
+  };
+}
+
+export function requestScrollToLatestComment(): void {
+  if (registeredScrollToLatestCommentHandler) {
+    registeredScrollToLatestCommentHandler();
+  }
+}
+
 /**
  * Limpa estado em memória (uso exclusivo em testes unitários).
  */
@@ -744,4 +791,5 @@ export function resetHighlightCommentsMemory(): void {
   activeCommentCountSnapshot = 0;
   activeCommentCountListeners = [];
   registeredCopyAllCommentsHandler = null;
+  registeredScrollToLatestCommentHandler = null;
 }

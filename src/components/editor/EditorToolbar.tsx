@@ -644,6 +644,16 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
                     isToolbarCommentOpen && isCustomHighlightActive ? 'justify-between w-full' : ''
                   }`}
                 >
+                  {isCustomHighlightActive && (
+                    <div className="pr-2 border-r border-slate-200 dark:border-slate-700 flex items-center">
+                      <HighlightCommentToggleButton
+                        hasComment={activeCommentText.trim().length > 0}
+                        isCommentOpen={isToolbarCommentOpen}
+                        onToggle={handleToggleToolbarComment}
+                      />
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-1.5 pr-2 border-r border-slate-200 dark:border-slate-700">
                     {HIGHLIGHT_COLORS.map((c) => (
                       <button
@@ -661,25 +671,15 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = React.memo(({
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-0.5">
-                    {isCustomHighlightActive && (
-                      <HighlightCommentToggleButton
-                        hasComment={activeCommentText.trim().length > 0}
-                        isCommentOpen={isToolbarCommentOpen}
-                        onToggle={handleToggleToolbarComment}
-                      />
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={handleRemoveHighlight}
-                      onMouseDown={(e) => e.preventDefault()}
-                      title="Remover grifo"
-                      className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveHighlight}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title="Remover grifo"
+                    className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
 
                 {isToolbarCommentOpen && isCustomHighlightActive && activeHighlightId && (

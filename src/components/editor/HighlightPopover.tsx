@@ -364,6 +364,16 @@ export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
       }}
     >
       <div className={`flex items-center gap-1.5 ${isCommentOpen ? 'justify-between w-full' : ''}`}>
+        {onToggleComment && (
+          <div className="pr-2 border-r border-slate-200 dark:border-slate-700 flex items-center">
+            <HighlightCommentToggleButton
+              hasComment={hasComment}
+              isCommentOpen={isCommentOpen}
+              onToggle={onToggleComment}
+            />
+          </div>
+        )}
+
         <div className="pr-2 border-r border-slate-200 dark:border-slate-700">
           <HighlightColorSwatches
             activeColor={activeColor}
@@ -373,29 +383,19 @@ export const HighlightPopover: React.FC<HighlightPopoverProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-0.5">
-          {onToggleComment && (
-            <HighlightCommentToggleButton
-              hasComment={hasComment}
-              isCommentOpen={isCommentOpen}
-              onToggle={onToggleComment}
-            />
-          )}
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onRemoveHighlight();
-            }}
-            onMouseDown={(e) => e.preventDefault()}
-            title="Remover grifo"
-            className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRemoveHighlight();
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          title="Remover grifo"
+          className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
 
       {isCommentOpen && onChangeComment && (

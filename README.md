@@ -122,7 +122,16 @@ Substitui o antigo ponto âmbar isolado e textos estáticos por um indicador din
 
 ---
 
-## 8. Scripts e Desenvolvimento
+## 8. Seletor Flutuante de Grifos (`HighlightPopover`) e Gotchas
+
+O seletor flutuante de cores e comentários no Modo Leitura / Modo Grifar foi desacoplado do `<BubbleMenu>` / `tippy.js` para eliminar inconsistências de `mousedown` vs `selectionchange` no desktop mantendo 100% de fluidez no iPad:
+
+- **Arquitetura:** `highlightPopoverGeometry.ts` (geometria pura, resolução de alvos e transações) + `useHighlightPopoverController.ts` (estado próprio e eventos PC/touch) + `FloatingHighlightPopover.tsx` (Portal `position: fixed`).
+- **Documentação obrigatória e armadilhas (*gotchas*):** consulte [`docs/HIGHLIGHT_POPOVER_GOTCHAS.md`](./docs/HIGHLIGHT_POPOVER_GOTCHAS.md) antes de alterar qualquer comportamento de grifos ou popovers no editor.
+
+---
+
+## 9. Scripts e Desenvolvimento
 
 No ambiente Windows PowerShell, utilize sempre `npm.cmd`:
 
