@@ -25,6 +25,7 @@ export interface TocStateSnapshot {
 
 type TocListener = (snapshot: TocStateSnapshot) => void;
 type NavigateToHeadingHandler = (headingIndex: number) => void;
+type CopySectionHandler = (headingIndex: number) => Promise<boolean> | boolean;
 
 let currentSnapshot: TocStateSnapshot = {
   headings: [],
@@ -33,6 +34,7 @@ let currentSnapshot: TocStateSnapshot = {
 
 let listeners: ReadonlyArray<TocListener> = [];
 let navigateHandler: NavigateToHeadingHandler | null = null;
+let copySectionHandler: CopySectionHandler | null = null;
 let activeHeadingPulseTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -386,4 +388,18 @@ export function requestNavigateToHeading(headingIndex: number): void {
   if (navigateHandler) {
     navigateHandler(headingIndex);
   }
+}
+
+export function registerCopySectionHandler(handler: CopySectionHandler): () => void {
+  copySectionHandler = handler;
+  return () => {
+    if (copySectionHandler === handler) {
+      copySectionHandler = null;
+    }
+  };
+}
+
+export async function requestCopySection(headingIndex: number): Promise<boolean> {
+  if (!copySectionHandler) return false;
+  return Boolean(await copySectionHandler(headingIndex));
 }

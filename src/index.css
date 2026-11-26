@@ -363,10 +363,13 @@ html.scroll-restoring body {
 }
 
 .ProseMirror blockquote {
-  border-left: 4px solid #475569;
+  border-left: 4px solid #94a3b8;
+  border-top: 2px dotted #cbd5e1;
+  border-right: 2px dotted #cbd5e1;
+  border-bottom: 2px dotted #cbd5e1;
   background-color: #f8fafc;
   padding: 0.75em 1.25em;
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 5px 5px 0;
   font-style: italic;
   margin: 1.5em 0;
   color: #334155;
@@ -380,7 +383,9 @@ html.scroll-restoring body {
 
 .dark .ProseMirror blockquote {
   border-left-color: #94a3b8;
-  background-color: #1e293b; /* Keeping it slightly dark but enough contrast */
+  border-top-color: rgba(148, 163, 184, 0.38);
+  border-right-color: rgba(148, 163, 184, 0.38);
+  border-bottom-color: rgba(148, 163, 184, 0.38);
   background-color: rgba(255, 255, 255, 0.04); /* Better adaptive contrast */
   color: #e2e8f0;
 }
@@ -418,6 +423,36 @@ html.scroll-restoring body {
   color: inherit !important;
   padding: 0 !important;
   border: none !important;
+}
+
+.ProseMirror .code-block-wrapper pre {
+  margin: 0;
+  border-radius: 0;
+}
+
+/* Hyperlinks Styling */
+.ProseMirror a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.ProseMirror a:hover {
+  color: #1d4ed8;
+}
+
+.dark .ProseMirror a {
+  color: #60a5fa;
+}
+
+.dark .ProseMirror a:hover {
+  color: #93c5fd;
+}
+
+.editor-mode-active .ProseMirror a {
+  cursor: text;
 }
 
 .ProseMirror img {
@@ -799,12 +834,15 @@ html.scroll-restoring body {
   }
 
   .ProseMirror blockquote {
-    border-left: 4px solid #64748b !important;
+    border-left: 4px solid #94a3b8 !important;
+    border-top: 2px dotted #cbd5e1 !important;
+    border-right: 2px dotted #cbd5e1 !important;
+    border-bottom: 2px dotted #cbd5e1 !important;
     background-color: #f8fafc !important;
     color: #334155 !important;
     padding: 0.6em 1.2em !important;
     margin: 1em 0 !important;
-    border-radius: 0 4px 4px 0 !important;
+    border-radius: 0 5px 5px 0 !important;
     break-inside: avoid !important;
     page-break-inside: avoid !important;
     -webkit-print-color-adjust: exact !important;

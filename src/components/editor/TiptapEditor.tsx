@@ -15,9 +15,11 @@ import { mergeAttributes } from '@tiptap/core';
 import TableRow from '@tiptap/extension-table-row';
 import TableHeader from '@tiptap/extension-table-header';
 import TableCell from '@tiptap/extension-table-cell';
+import Link from '@tiptap/extension-link';
 
 import { useAppStore } from '../../store/useAppStore';
 import { CustomHighlight } from './CustomHighlight';
+import { CopyableCodeBlock } from './CopyableCodeBlock';
 import { FloatingHighlightPopover } from './FloatingHighlightPopover';
 import { EditorToolbar } from './EditorToolbar';
 import { SearchHighlightExtension } from './SearchHighlightExtension';
@@ -77,8 +79,16 @@ import {
   updateTocState,
   resetTocState,
   registerNavigateToHeadingHandler,
+  requestNavigateToHeading,
+  registerCopySectionHandler,
   pulseHeadingElement,
 } from '../../services/tocService';
+import {
+  isInternalAnchorHref,
+  isSafeLinkHref,
+  findHeadingIndexByAnchor,
+} from '../../services/headingAnchorService';
+import { extractSectionMarkdownByHeadingIndex } from '../../services/sectionCopyService';
 import {
   getTopLevelBlockCharRanges,
   serializeDocIncrementally,
@@ -488,6 +498,18 @@ export const TiptapEditor: React.FC = () => {
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3, 4, 5, 6] },
+        codeBlock: false,
+      }),
+      CopyableCodeBlock,
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+        linkOnPaste: true,
+        defaultProtocol: 'https',
+        isAllowedUri: (url) => isSafeLinkHref(url),
+        HTMLAttributes: {
+          rel: 'noopener noreferrer',
+        },
       }),
       Image.configure({ inline: true, allowBase64: true }),
       Table.extend({
@@ -1404,6 +1426,78 @@ export const TiptapEditor: React.FC = () => {
     return unregister;
   }, []);
 
+  // Registra o comando de cópia de seção acionado pelo Sumário (Outline)
+  useEffect(() => {
+    const unregister = registerCopySectionHandler(async (headingIndex: number) => {
+      let markdown = '';
+
+      if (isSourceModeRef.current) {
+        markdown = rawContentRef.current;
+      } else {
+        const currentEditor = editorRef.current;
+        if (currentEditor && !currentEditor.isDestroyed) {
+          markdown = serializeDocIncrementally(currentEditor);
+        }
+        if (!markdown) {
+          markdown =
+            lastEmittedMarkdownRef.current ??
+            useAppStore.getState().document?.content ??
+            '';
+        }
+      }
+
+      const sectionText = extractSectionMarkdownByHeadingIndex(markdown, headingIndex);
+      if (!sectionText) return false;
+
+      return copyTextToClipboard(sectionText);
+    });
+
+    return unregister;
+  }, []);
+
+  // Trata cliques em hiperlinks internos (#ancora) e externos (https://...) no leitor/editor
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleLinkClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const anchor = target?.closest('.ProseMirror a[href]') as HTMLAnchorElement | null;
+      if (!anchor) return;
+
+      e.preventDefault();
+
+      // Não ativa link se o usuário estiver arrastando seleção de texto
+      const domSel = window.getSelection();
+      if (domSel && !domSel.isCollapsed && domSel.toString().trim().length > 0) {
+        return;
+      }
+
+      // Em Modo Edição, exige Ctrl+Clique (ou Cmd+Clique) para não atrapalhar a edição do texto
+      if (isEditable && !(e.ctrlKey || e.metaKey)) {
+        return;
+      }
+
+      const href = (anchor.getAttribute('href') || '').trim();
+      if (!href) return;
+
+      if (isInternalAnchorHref(href)) {
+        const targetHeadingIdx = findHeadingIndexByAnchor(getTocSnapshot().headings, href);
+        if (targetHeadingIdx !== -1) {
+          requestNavigateToHeading(targetHeadingIdx);
+        }
+        return;
+      }
+
+      if (isSafeLinkHref(href)) {
+        window.open(href, '_blank', 'noopener,noreferrer');
+      }
+    };
+
+    container.addEventListener('click', handleLinkClick);
+    return () => container.removeEventListener('click', handleLinkClick);
+  }, [isEditable]);
+
   // Update editor editable mode
   useEffect(() => {
     if (editor) {
@@ -1418,8 +1512,8 @@ export const TiptapEditor: React.FC = () => {
 
       const target = e.target as HTMLElement;
 
-      // Ignora toques/cliques no próprio popover; só ignora <mark> quando não há seleção de texto (clique simples)
-      if (target?.closest('[data-highlight-popover]')) {
+      // Ignora toques/cliques no próprio popover ou botão de copiar código; só ignora <mark> quando não há seleção de texto (clique simples)
+      if (target?.closest('[data-highlight-popover]') || target?.closest('[data-code-copy-btn]')) {
         return;
       }
 

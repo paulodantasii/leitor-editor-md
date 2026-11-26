@@ -6,6 +6,8 @@ import {
   Search,
   X,
   Hash,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import {
@@ -15,6 +17,7 @@ import {
   getTocSnapshot,
   computeBreadcrumbTrail,
   requestNavigateToHeading,
+  requestCopySection,
 } from '../../services/tocService';
 
 export const DocumentOutlineBar: React.FC = () => {
@@ -24,10 +27,12 @@ export const DocumentOutlineBar: React.FC = () => {
   const [toc, setToc] = useState<TocStateSnapshot>(() => getTocSnapshot());
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [copiedHeadingIndex, setCopiedHeadingIndex] = useState<number | null>(null);
 
   const barContainerRef = useRef<HTMLDivElement>(null);
   const activeItemButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return subscribeTocState((snapshot) => {
@@ -35,11 +40,24 @@ export const DocumentOutlineBar: React.FC = () => {
     });
   }, []);
 
-  // Fecha o popover ao trocar de documento/aba
+  // Fecha o popover ao trocar de documento/aba e limpa timer de feedback
   useEffect(() => {
     setIsOpen(false);
     setSearchQuery('');
+    setCopiedHeadingIndex(null);
+    if (copyFeedbackTimerRef.current) {
+      clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = null;
+    }
   }, [docId, hasDocument]);
+
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimerRef.current) {
+        clearTimeout(copyFeedbackTimerRef.current);
+      }
+    };
+  }, []);
 
   // Fecha o popover ao clicar fora ou pressionar Escape
   useEffect(() => {
@@ -119,6 +137,24 @@ export const DocumentOutlineBar: React.FC = () => {
     setIsOpen(false);
     setSearchQuery('');
     requestNavigateToHeading(headingIndex);
+  };
+
+  const handleCopySection = async (
+    e: React.MouseEvent<HTMLButtonElement>,
+    headingIndex: number
+  ) => {
+    e.stopPropagation();
+    const ok = await requestCopySection(headingIndex);
+    if (!ok) return;
+
+    setCopiedHeadingIndex(headingIndex);
+    if (copyFeedbackTimerRef.current) {
+      clearTimeout(copyFeedbackTimerRef.current);
+    }
+    copyFeedbackTimerRef.current = setTimeout(() => {
+      setCopiedHeadingIndex(null);
+      copyFeedbackTimerRef.current = null;
+    }, 1800);
   };
 
   return (
@@ -251,17 +287,14 @@ export const DocumentOutlineBar: React.FC = () => {
               filteredHeadings.map((item) => {
                 const isActive = item.index === activeIndex;
                 const isAncestor = !isActive && trail.some((t) => t.index === item.index);
+                const isCopied = copiedHeadingIndex === item.index;
                 const depth = Math.max(0, item.level - minLevelInDoc);
                 const indentPx = Math.min(depth * 14, 64);
 
                 return (
-                  <button
+                  <div
                     key={item.id}
-                    ref={isActive ? activeItemButtonRef : undefined}
-                    type="button"
-                    onClick={() => handleSelectHeading(item.index)}
-                    style={{ paddingLeft: `${indentPx + 8}px` }}
-                    className={`w-full py-1.5 pr-2.5 rounded-lg flex items-center gap-2 text-left text-xs transition-colors cursor-pointer ${
+                    className={`group w-full rounded-lg flex items-center gap-1 pr-1.5 transition-colors ${
                       isActive
                         ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold'
                         : isAncestor
@@ -269,35 +302,65 @@ export const DocumentOutlineBar: React.FC = () => {
                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60'
                     }`}
                   >
-                    <span
-                      className={`inline-flex items-center justify-center px-1 py-0.2 rounded text-[9px] font-mono font-bold uppercase shrink-0 ${
-                        isActive
-                          ? 'bg-blue-600 text-white'
-                          : isAncestor
-                          ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400'
-                          : 'bg-slate-100 dark:bg-slate-700/80 text-slate-400 dark:text-slate-400'
+                    <button
+                      ref={isActive ? activeItemButtonRef : undefined}
+                      type="button"
+                      onClick={() => handleSelectHeading(item.index)}
+                      style={{ paddingLeft: `${indentPx + 8}px` }}
+                      className="flex-1 min-w-0 py-1.5 pr-1 flex items-center gap-2 text-left text-xs cursor-pointer"
+                    >
+                      <span
+                        className={`inline-flex items-center justify-center px-1 py-0.2 rounded text-[9px] font-mono font-bold uppercase shrink-0 ${
+                          isActive
+                            ? 'bg-blue-600 text-white'
+                            : isAncestor
+                            ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400'
+                            : 'bg-slate-100 dark:bg-slate-700/80 text-slate-400 dark:text-slate-400'
+                        }`}
+                      >
+                        <Hash className="w-2.5 h-2.5 mr-0.5 opacity-70" />
+                        {item.level}
+                      </span>
+
+                      <span
+                        className={`flex-1 truncate ${
+                          item.level === 1
+                            ? 'font-bold text-slate-900 dark:text-white'
+                            : item.level === 2
+                            ? 'font-semibold'
+                            : 'font-normal'
+                        } ${isActive ? '!text-blue-700 dark:!text-blue-300' : ''}`}
+                      >
+                        {item.text}
+                      </span>
+
+                      {isActive && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 shrink-0" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleCopySection(e, item.index)}
+                      title={isCopied ? 'Seção copiada!' : 'Copiar conteúdo desta seção'}
+                      aria-label={
+                        isCopied
+                          ? `Seção ${item.text} copiada`
+                          : `Copiar conteúdo da seção ${item.text}`
+                      }
+                      className={`p-1 rounded-md shrink-0 transition-all cursor-pointer ${
+                        isCopied
+                          ? 'opacity-100 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10'
+                          : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-200/70 dark:hover:bg-slate-600/50'
                       }`}
                     >
-                      <Hash className="w-2.5 h-2.5 mr-0.5 opacity-70" />
-                      {item.level}
-                    </span>
-
-                    <span
-                      className={`flex-1 truncate ${
-                        item.level === 1
-                          ? 'font-bold text-slate-900 dark:text-white'
-                          : item.level === 2
-                          ? 'font-semibold'
-                          : 'font-normal'
-                      } ${isActive ? '!text-blue-700 dark:!text-blue-300' : ''}`}
-                    >
-                      {item.text}
-                    </span>
-
-                    {isActive && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 shrink-0" />
-                    )}
-                  </button>
+                      {isCopied ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                 );
               })
             )}
