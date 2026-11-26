@@ -39,6 +39,7 @@ export interface ViewportMetrics {
   readonly offsetTop: number;
   readonly offsetLeft: number;
   readonly headerBottom: number;
+  readonly footerHeight?: number;
 }
 
 export interface ComputedPopoverPosition {
@@ -542,7 +543,7 @@ export function isAnchorVisibleInViewport(
   viewport: ViewportMetrics
 ): boolean {
   const minTop = Math.max(viewport.headerBottom, viewport.offsetTop);
-  const maxBottom = viewport.offsetTop + viewport.height;
+  const maxBottom = viewport.offsetTop + viewport.height - (viewport.footerHeight ?? 0);
   const minLeft = viewport.offsetLeft;
   const maxRight = viewport.offsetLeft + viewport.width;
 
@@ -576,7 +577,7 @@ export function computePopoverPosition(
   const left = Math.round(Math.min(Math.max(rawLeft, minLeft), maxLeft));
 
   const topSafeBound = Math.max(viewport.headerBottom + margin, viewport.offsetTop + margin);
-  const bottomSafeBound = viewport.offsetTop + viewport.height - margin;
+  const bottomSafeBound = viewport.offsetTop + viewport.height - (viewport.footerHeight ?? 0) - margin;
   const maxTop = Math.max(topSafeBound, bottomSafeBound - popover.height);
 
   const topAbove = anchor.top - popover.height - gap;

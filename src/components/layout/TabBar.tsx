@@ -856,7 +856,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onRequestCloseTab, onNewTab }) =
     : null;
 
   return (
-    <div className="bg-slate-50/80 dark:bg-slate-950/40 border-b border-slate-200/80 dark:border-slate-800/80 header-safe-area transition-colors">
+    <div className="bg-slate-50/80 dark:bg-slate-950/40 border-t border-b border-slate-200/80 dark:border-slate-800/80 header-safe-area transition-colors">
       <div
         ref={tabBarContainerRef}
         onDragEnter={handleContainerDragEnter}

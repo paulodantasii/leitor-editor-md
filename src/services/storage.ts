@@ -50,6 +50,8 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   fontFamily: 'sans',
   textWidth: 'normal',
   autoSync: true,
+  readingSpeedMode: 'adaptive',
+  fixedReadingWpm: 130,
 };
 
 /**

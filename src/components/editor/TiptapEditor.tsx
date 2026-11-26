@@ -1680,7 +1680,7 @@ export const TiptapEditor: React.FC = () => {
   const popoverLayoutTriggerKey = `${preferences.fontSize}-${preferences.fontFamily}-${preferences.textWidth}-${commentsVersion}`;
 
   return (
-    <div className="w-full flex flex-col items-center py-4 px-4 sm:px-6 print:p-0 print:m-0 print:w-full">
+    <div className="w-full flex flex-col items-center pt-4 pb-10 px-4 sm:px-6 print:p-0 print:m-0 print:w-full">
       {isEditable && (
         <EditorToolbar
           editor={editor}

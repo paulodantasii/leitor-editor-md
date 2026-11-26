@@ -9,7 +9,7 @@ import { InstallAppModal } from './components/modals/InstallAppModal';
 import { SyncNotificationToast } from './components/layout/SyncNotificationToast';
 import { useAppStore } from './store/useAppStore';
 
-import { ReadingProgress } from './components/layout/ReadingProgress';
+import { ReadingStatusBar } from './components/layout/ReadingStatusBar';
 import { useAutoSaveAndSync } from './hooks/useAutoSaveAndSync';
 import { getActiveAccount } from './services/msalService';
 import { saveActiveDocument } from './services/documentSaveService';
@@ -153,7 +153,7 @@ export const App: React.FC = () => {
         {hasDocument ? <TiptapEditor /> : <HomeScreen />}
       </main>
 
-      <ReadingProgress />
+      <ReadingStatusBar />
       <OneDriveModal />
       <SettingsModal />
       <RecentDocumentsModal />

@@ -10,6 +10,7 @@ export interface HighlightColorOption {
 
 export type FontFamily = 'sans' | 'serif';
 export type TextWidth = 'narrow' | 'normal' | 'wide' | 'full'; // 65ch, 80ch, 100ch, 100%
+export type ReadingSpeedMode = 'adaptive' | 'fixed';
 
 export interface UserPreferences {
   theme: 'light' | 'dark';
@@ -17,6 +18,8 @@ export interface UserPreferences {
   fontFamily: FontFamily;
   textWidth: TextWidth;
   autoSync?: boolean;
+  readingSpeedMode?: ReadingSpeedMode;
+  fixedReadingWpm?: number;
 }
 
 export type SyncStatus = 'idle' | 'saving' | 'saved' | 'offline-pending' | 'error';
@@ -43,6 +46,7 @@ export interface DocumentState {
   cloudLastModified?: string | null;
   cloudETag?: string | null;
   localLastModified?: number | null;
+  lastModifiedAt?: number | null;
   fileHandle?: any;
 }
 

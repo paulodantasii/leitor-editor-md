@@ -357,6 +357,33 @@ describe('highlightPopoverGeometry — geometria de posicionamento, flip, clampi
       isAnchorVisibleInViewport({ left: -20, right: -5, top: 200, bottom: 220 }, desktopViewport)
     ).toBe(false);
   });
+
+  it('respeita footerHeight evitando que o popover sobreponha a barra inferior fixa', () => {
+    const viewportWithFooter: ViewportMetrics = {
+      width: 1280,
+      height: 800,
+      offsetTop: 0,
+      offsetLeft: 0,
+      headerBottom: 78,
+      footerHeight: 23,
+    };
+
+    // Âncora na área coberta pelo footer (top >= 777) é considerada fora da área visível
+    expect(
+      isAnchorVisibleInViewport(
+        { left: 400, right: 420, top: 780, bottom: 798 },
+        viewportWithFooter
+      )
+    ).toBe(false);
+
+    // Popover próximo ao fundo respeita o limite 800 - 23 - 8 = 769
+    const pos = computePopoverPosition(
+      { left: 500, right: 500, top: 680, bottom: 702 },
+      { width: 280, height: 220 },
+      viewportWithFooter
+    );
+    expect(pos.top + 220).toBeLessThanOrEqual(800 - 23 - 8);
+  });
 });
 
 describe('highlightPopoverGeometry — transações puras de cor e remoção', () => {

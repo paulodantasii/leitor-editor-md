@@ -374,6 +374,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       cloudLastModified: doc.cloudLastModified ?? null,
       cloudETag: doc.cloudETag ?? null,
       localLastModified: doc.localLastModified ?? null,
+      lastModifiedAt: doc.lastModifiedAt ?? null,
       fileHandle: fileHandle || doc.fileHandle || null,
     };
 
@@ -601,6 +602,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             cloudLastModified: fullDoc?.cloudLastModified ?? match.cloudLastModified,
             cloudETag: fullDoc?.cloudETag ?? match.cloudETag,
             localLastModified: fullDoc?.localLastModified ?? match.localLastModified,
+            lastModifiedAt: fullDoc?.lastModifiedAt ?? match.lastModifiedAt ?? null,
             fileHandle: fullDoc?.fileHandle ?? match.fileHandle ?? targetHandle,
           };
           targetHandle = targetDoc.fileHandle || null;
@@ -773,12 +775,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       return t;
     });
 
-    if (isActive && currentDoc) {
+      if (isActive && currentDoc) {
       const updatedDoc: DocumentState = {
         ...currentDoc,
         title: finalTitle,
         isDirty: true,
         revision: (currentDoc.revision ?? 0) + 1,
+        lastModifiedAt: Date.now(),
       };
       let newHandle = state.fileHandle;
       if (newHandle && newHandle.name !== finalTitle) {
@@ -1139,6 +1142,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         sourceRevision,
         draftRevision,
         isDirty,
+        lastModifiedAt:
+          docPartial.lastModifiedAt !== undefined
+            ? docPartial.lastModifiedAt
+            : isNewContent || isNewTitle
+              ? Date.now()
+              : currentDoc.lastModifiedAt ?? null,
         docId:
           docPartial.docId ||
           state.document?.docId ||
@@ -1194,6 +1203,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         content,
         revision: newRevision,
         isDirty: newRevision > sourceRev,
+        lastModifiedAt: Date.now(),
       };
       saveLocalDocument(updated);
 
@@ -1220,6 +1230,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.document,
         revision: newRevision,
         isDirty: true,
+        lastModifiedAt: Date.now(),
       };
       const updatedTabs = state.tabs.map((t) =>
         t.id === state.activeTabId
@@ -1333,6 +1344,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           draftRevision: latestState.document.draftRevision ?? fullData.draftRevision ?? 0,
           cloudLastModified: latestState.document.cloudLastModified ?? fullData.cloudLastModified ?? null,
           cloudETag: latestState.document.cloudETag ?? fullData.cloudETag ?? null,
+          localLastModified: latestState.document.localLastModified ?? fullData.localLastModified ?? null,
+          lastModifiedAt: latestState.document.lastModifiedAt ?? fullData.lastModifiedAt ?? null,
           fileHandle: latestState.document.fileHandle ?? fullData.fileHandle ?? null,
         };
 

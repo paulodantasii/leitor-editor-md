@@ -11,6 +11,8 @@
  * <!-- HIGHLIGHT_COMMENTS_END -->
  */
 
+import { notifyReadingPaceProgrammaticJump } from './readingPaceService';
+
 export const HIGHLIGHT_COMMENTS_START_MARKER = '<!-- HIGHLIGHT_COMMENTS_START -->';
 export const HIGHLIGHT_COMMENTS_END_MARKER = '<!-- HIGHLIGHT_COMMENTS_END -->';
 const HIGHLIGHT_COMMENTS_HEADER = '**Comentários dos Grifos**';
@@ -778,6 +780,7 @@ export function registerScrollToLatestCommentHandler(
 }
 
 export function requestScrollToLatestComment(): void {
+  notifyReadingPaceProgrammaticJump();
   if (registeredScrollToLatestCommentHandler) {
     registeredScrollToLatestCommentHandler();
   }

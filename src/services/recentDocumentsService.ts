@@ -479,6 +479,17 @@ export async function saveRecentDocument(
 
     // lastOpenedAt: mantém o horário original se já existia; só define agora se for novo no histórico
     const lastOpenedAt = existingIndexItem?.lastOpenedAt ?? now;
+    const parsedCloudModifiedMs = doc.cloudLastModified ? Date.parse(doc.cloudLastModified) : NaN;
+    const resolvedLastModified =
+      reason === 'open'
+        ? (typeof doc.lastModifiedAt === 'number' && Number.isFinite(doc.lastModifiedAt) && doc.lastModifiedAt > 0
+            ? doc.lastModifiedAt
+            : Number.isFinite(parsedCloudModifiedMs) && parsedCloudModifiedMs > 0
+              ? parsedCloudModifiedMs
+              : typeof doc.localLastModified === 'number' && Number.isFinite(doc.localLastModified) && doc.localLastModified > 0
+                ? doc.localLastModified
+                : existingIndexItem?.lastModifiedAt ?? now)
+        : now;
 
     const updatedIndexItem: RecentDocumentItem = {
       id,
@@ -488,9 +499,10 @@ export async function saveRecentDocument(
       oneDriveItemId: doc.oneDriveItemId || null,
       lastSavedAt: doc.lastSavedAt || existingIndexItem?.lastSavedAt || null,
       lastOpenedAt,
-      lastModifiedAt: now,
+      lastModifiedAt: resolvedLastModified,
       isOneDrive: sourceType === 'onedrive',
       cloudLastModified: doc.cloudLastModified || existingIndexItem?.cloudLastModified || null,
+      localLastModified: doc.localLastModified ?? existingIndexItem?.localLastModified ?? null,
       revision: doc.revision ?? 0,
       draftRevision: doc.draftRevision ?? 0,
       sourceRevision: doc.sourceRevision ?? 0,
@@ -617,6 +629,8 @@ export async function loadRecentDocumentWithCloudSync(
       revision: rev,
       sourceRevision: srcRev,
       draftRevision: cachedFullDoc?.draftRevision ?? item.draftRevision ?? rev,
+      localLastModified: cachedFullDoc?.localLastModified ?? item.localLastModified ?? null,
+      lastModifiedAt: cachedFullDoc?.lastModifiedAt ?? item.lastModifiedAt ?? null,
       docId: cachedFullDoc?.docId || item.id.replace(/^(draft:|file:|local_)/, ''),
     };
 
@@ -632,6 +646,8 @@ export async function loadRecentDocumentWithCloudSync(
       getOneDriveItemMetadata(item.oneDriveItemId).catch(() => null),
     ]);
 
+    const resolvedCloudModified = metadata?.lastModifiedDateTime || item.cloudLastModified || null;
+    const parsedCloudMs = resolvedCloudModified ? Date.parse(resolvedCloudModified) : NaN;
     const doc: DocumentState = {
       title: metadata?.name || item.title,
       content: freshestContent,
@@ -642,8 +658,9 @@ export async function loadRecentDocumentWithCloudSync(
       sourceRevision: 0,
       draftRevision: 0,
       docId: `doc-${Date.now()}`,
-      cloudLastModified: metadata?.lastModifiedDateTime || item.cloudLastModified || null,
+      cloudLastModified: resolvedCloudModified,
       cloudETag: metadata?.eTag || null,
+      lastModifiedAt: Number.isFinite(parsedCloudMs) ? parsedCloudMs : item.lastModifiedAt ?? null,
     };
 
     // Atualiza cache individual e ordem de abertura
@@ -667,6 +684,7 @@ export async function loadRecentDocumentWithCloudSync(
       draftRevision: cachedFullDoc?.draftRevision ?? item.draftRevision ?? rev,
       docId: cachedFullDoc?.docId || `doc-${Date.now()}`,
       cloudLastModified: item.cloudLastModified || null,
+      lastModifiedAt: cachedFullDoc?.lastModifiedAt ?? item.lastModifiedAt ?? null,
     };
 
     await touchDocumentOpened(item.id);

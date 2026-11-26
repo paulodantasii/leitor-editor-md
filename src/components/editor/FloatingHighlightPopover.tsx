@@ -46,6 +46,11 @@ function readViewportMetrics(): ViewportMetrics {
   const offsetLeft = vv?.offsetLeft ?? 0;
   const headerEl = typeof document !== 'undefined' ? document.querySelector('header') : null;
   const headerBottom = headerEl ? Math.max(0, headerEl.getBoundingClientRect().bottom) : 0;
+  const footerEl =
+    typeof document !== 'undefined'
+      ? document.querySelector('[data-reading-status-bar]')
+      : null;
+  const footerHeight = footerEl ? Math.max(0, footerEl.getBoundingClientRect().height) : 0;
 
   return {
     width,
@@ -53,6 +58,7 @@ function readViewportMetrics(): ViewportMetrics {
     offsetTop,
     offsetLeft,
     headerBottom,
+    footerHeight,
   };
 }
 

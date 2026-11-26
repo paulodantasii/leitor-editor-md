@@ -10,6 +10,7 @@
     --editor-size: 16px;
     --editor-width: 80ch;
     --header-height: calc(4.875rem + env(safe-area-inset-top, 0px)); /* ~78px: Linha 1 (44px) + Linha 2 (32px) + bordas */
+    --footer-height: 0px;
   }
 
   @media (max-width: 639px) {
@@ -38,6 +39,11 @@
 /* Safe area top padding for sticky header on iPad / iOS */
 .header-safe-area {
   padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Safe area bottom padding for fixed footer bar on iPad / iOS */
+.footer-safe-area {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Hide scrollbar for horizontal tab strip */
@@ -144,7 +150,7 @@ mark.orange {
 }
 
 mark.gray {
-  background-color: #b8c4d4;
+  background-color: #dce4ee;
 }
 
 /* Dark mode adjustment for pastel highlights */
@@ -737,6 +743,8 @@ html.scroll-restoring body {
 
   /* Completely hide all UI Chrome, headers, toolbars, popovers, modals */
   header,
+  footer,
+  [data-reading-status-bar],
   .print\:hidden,
   [data-highlight-popover],
   [data-find-replace-bar],
@@ -954,7 +962,7 @@ html.scroll-restoring body {
   }
 
   mark.gray {
-    background-color: #b8c4d4 !important;
+    background-color: #dce4ee !important;
   }
 
   /* Hide search highlight overlays during PDF export / print */

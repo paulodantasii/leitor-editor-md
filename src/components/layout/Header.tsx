@@ -6,7 +6,6 @@ import { UnsavedChangesModal, GuardActionType } from '../modals/UnsavedChangesMo
 import { downloadMarkdownFile, printDocument } from '../../services/exportService';
 import {
   Highlighter,
-  LocateFixed,
   Edit3,
   BookOpen,
   RefreshCw,
@@ -19,11 +18,9 @@ import {
   MessageSquareText,
   Check,
 } from 'lucide-react';
-import { requestScrollToLatestHighlight } from '../../services/highlightIdService';
 import {
   subscribeActiveCommentCount,
   requestCopyAllComments,
-  requestScrollToLatestComment,
 } from '../../services/highlightCommentsService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveActiveDocument } from '../../services/documentSaveService';
@@ -480,95 +477,49 @@ export const Header: React.FC = () => {
                 aria-pressed={isSearchOpen}
                 aria-label="Localizar e substituir no documento"
                 title="Localizar e substituir (Ctrl+F / Ctrl+H)"
-                className={`px-2 sm:px-2.5 h-[26px] rounded-lg font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                className={`w-8 h-[26px] rounded-lg flex items-center justify-center transition-all shrink-0 cursor-pointer ${
                   isSearchOpen
-                    ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                    ? 'bg-blue-600 text-white shadow-sm'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                 }`}
               >
                 <Search className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">Buscar</span>
               </button>
 
-              {/* Modo Grifar (Toggle Button + Badge) + Botão Ir para o Grifo Mais Recente */}
-              <div className="flex items-center gap-0.5 shrink-0">
+              {/* Modo Grifar (Toggle Button) + Copiar Comentários */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={toggleHighlightMode}
-                  className={`px-2.5 sm:px-3 h-[26px] ${
-                    highlightCount > 0 ? 'rounded-l-lg rounded-r-md' : 'rounded-lg'
-                  } font-medium text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                  aria-label="Ativar/Desativar Modo Grifar"
+                  aria-pressed={isHighlightMode}
+                  className={`w-8 h-[26px] rounded-lg flex items-center justify-center transition-all shrink-0 cursor-pointer ${
                     isHighlightMode
-                      ? 'bg-amber-500 text-white shadow-sm font-semibold'
+                      ? 'bg-amber-500 text-white shadow-sm'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                   }`}
                   title="Ativar/Desativar Modo Grifar (Atalho: tecla G)"
                 >
                   <Highlighter className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Grifar</span>
-                  <span
-                    className={`px-1.5 py-[1px] rounded-full text-[10px] leading-tight font-bold ${
-                      isHighlightMode ? 'bg-amber-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                    }`}
-                  >
-                    {highlightCount}
-                  </span>
                 </button>
 
-                {highlightCount > 0 && (
+                {activeCommentCount > 0 && (
                   <button
                     type="button"
-                    onClick={requestScrollToLatestHighlight}
-                    title="Ir para o grifo mais recente (Atalho: tecla J)"
-                    aria-label="Ir para o grifo mais recente"
-                    className={`h-[26px] px-2 rounded-r-lg rounded-l-md flex items-center justify-center transition-all shrink-0 cursor-pointer ${
-                      isHighlightMode
-                        ? 'bg-amber-500/90 hover:bg-amber-600 text-white shadow-sm'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-100 dark:hover:bg-slate-700 hover:text-amber-700 dark:hover:text-amber-300'
+                    onClick={handleCopyAllHeaderComments}
+                    title={`Copiar todos os comentários (${activeCommentCount})`}
+                    aria-label={`Copiar todos os comentários (${activeCommentCount})`}
+                    className={`w-8 h-[26px] rounded-lg flex items-center justify-center transition-all shrink-0 cursor-pointer ${
+                      copiedAllComments
+                        ? 'bg-emerald-500 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700'
                     }`}
                   >
-                    <LocateFixed className="w-3 h-3" />
+                    {copiedAllComments ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <MessageSquareText className="w-3.5 h-3.5" />
+                    )}
                   </button>
-                )}
-
-                {activeCommentCount > 0 && (
-                  <div className="flex items-center gap-0.5 ml-0.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={handleCopyAllHeaderComments}
-                      title={`Copiar todos os comentários (${activeCommentCount})`}
-                      aria-label={`Copiar todos os comentários (${activeCommentCount})`}
-                      className={`h-[26px] px-2 rounded-l-lg rounded-r-md font-medium text-xs flex items-center gap-1 transition-all shrink-0 cursor-pointer ${
-                        copiedAllComments
-                          ? 'bg-emerald-500 text-white shadow-sm'
-                          : 'bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700'
-                      }`}
-                    >
-                      {copiedAllComments ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <MessageSquareText className="w-3.5 h-3.5" />
-                      )}
-                      <span
-                        className={`px-1 py-[1px] rounded-full text-[10px] leading-tight font-bold ${
-                          copiedAllComments
-                            ? 'bg-emerald-700 text-white'
-                            : 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300'
-                        }`}
-                      >
-                        {activeCommentCount}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={requestScrollToLatestComment}
-                      title="Ir para o comentário mais recente (Atalho: tecla K)"
-                      aria-label="Ir para o comentário mais recente"
-                      className="h-[26px] px-2 rounded-r-lg rounded-l-md flex items-center justify-center transition-all shrink-0 cursor-pointer bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-slate-700 hover:text-blue-700 dark:hover:text-blue-300"
-                    >
-                      <LocateFixed className="w-3 h-3" />
-                    </button>
-                  </div>
                 )}
               </div>
 
@@ -581,29 +532,29 @@ export const Header: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsEditable(false)}
+                  aria-label="Modo Leitura"
                   title="Modo Leitura (focado na leitura e grifos)"
-                  className={`h-[22px] px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
+                  className={`h-[22px] px-2 rounded-md flex items-center justify-center transition-all duration-200 cursor-pointer ${
                     !isEditable
-                      ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm font-semibold'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
+                      ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                   }`}
                 >
-                  <BookOpen className={`w-3 h-3 ${!isEditable ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                  <span className="hidden sm:inline">Leitura</span>
+                  <BookOpen className={`w-3.5 h-3.5 ${!isEditable ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setIsEditable(true)}
+                  aria-label="Modo Edição"
                   title="Modo Edição (digitação e formatação Markdown)"
-                  className={`h-[22px] px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-all duration-200 cursor-pointer ${
+                  className={`h-[22px] px-2 rounded-md flex items-center justify-center transition-all duration-200 cursor-pointer ${
                     isEditable
-                      ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                   }`}
                 >
-                  <Edit3 className={`w-3 h-3 ${isEditable ? 'text-white' : 'text-slate-400 dark:text-slate-500'}`} />
-                  <span className="hidden sm:inline">Edição</span>
+                  <Edit3 className={`w-3.5 h-3.5 ${isEditable ? 'text-white' : 'text-slate-400 dark:text-slate-500'}`} />
                 </button>
               </div>
             </>

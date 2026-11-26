@@ -12,6 +12,7 @@
 
 import { TextSelection } from '@tiptap/pm/state';
 import { HighlightColor } from '../types';
+import { notifyReadingPaceProgrammaticJump } from './readingPaceService';
 
 export const SEQUENTIAL_ID_MIN_LENGTH = 5;
 const SEQUENTIAL_ID_REGEX = /^[0-9a-z]{5,}$/;
@@ -731,6 +732,7 @@ export function registerScrollToLatestHighlightHandler(handler: ScrollToLatestHa
  * Dispara a navegação até o grifo mais recente no editor ativo.
  */
 export function requestScrollToLatestHighlight(): void {
+  notifyReadingPaceProgrammaticJump();
   if (registeredScrollHandler) {
     registeredScrollHandler();
   }

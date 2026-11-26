@@ -2,6 +2,7 @@ import {
   HIGHLIGHT_COMMENTS_START_MARKER,
   HIGHLIGHT_COMMENTS_END_MARKER,
 } from './highlightCommentsService';
+import { notifyReadingPaceProgrammaticJump } from './readingPaceService';
 
 export interface TocHeadingItem {
   /** Identificador estável por índice e nível (ex.: "h-0-1", "h-1-2") */
@@ -385,6 +386,7 @@ export function registerNavigateToHeadingHandler(handler: NavigateToHeadingHandl
 }
 
 export function requestNavigateToHeading(headingIndex: number): void {
+  notifyReadingPaceProgrammaticJump();
   if (navigateHandler) {
     navigateHandler(headingIndex);
   }

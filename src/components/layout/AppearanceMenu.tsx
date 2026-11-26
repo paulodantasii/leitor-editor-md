@@ -55,16 +55,17 @@ export const AppearanceMenu: React.FC = () => {
   return (
     <div className="relative" ref={menuRef}>
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="Aparência e Tipografia"
         title="Aparência e Tipografia"
-        className={`px-2.5 sm:px-3 h-[26px] rounded-lg transition-colors flex items-center gap-1.5 text-xs font-medium shrink-0 ${
+        className={`w-8 h-[26px] rounded-lg transition-colors flex items-center justify-center shrink-0 cursor-pointer ${
           isOpen
             ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
             : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
         }`}
       >
         <Sliders className="w-3.5 h-3.5" />
-        <span className="hidden md:inline">Aparência</span>
       </button>
 
       {isOpen && (

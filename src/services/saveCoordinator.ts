@@ -132,6 +132,7 @@ class SaveCoordinator {
 
     useAppStore.getState().setDocument({
       draftRevision: currentRev,
+      lastModifiedAt: doc.lastModifiedAt ?? Date.now(),
     });
 
     const updatedDoc = useAppStore.getState().document;
@@ -253,6 +254,7 @@ class SaveCoordinator {
             isDirty: isStillDirty,
             lastSavedAt: nowFormatted,
             localLastModified: file.lastModified,
+            lastModifiedAt: file.lastModified,
             fileHandle: newHandle,
           });
 
@@ -370,6 +372,9 @@ class SaveCoordinator {
         const hadChanges = freshContent !== contentToSave || resolvedTitle !== titleToSave;
         const targetRev = hadChanges ? (latest.revision ?? 0) + 1 : (latest.revision ?? 0);
 
+        const resolvedCloudModified = metadata?.lastModifiedDateTime ?? latest.cloudLastModified ?? null;
+        const parsedCloudMs = resolvedCloudModified ? Date.parse(resolvedCloudModified) : NaN;
+
         useAppStore.getState().setDocument({
           title: resolvedTitle,
           content: freshContent,
@@ -378,8 +383,9 @@ class SaveCoordinator {
           draftRevision: Math.max(latest.draftRevision ?? 0, targetRev),
           isDirty: false,
           lastSavedAt: nowFormatted,
-          cloudLastModified: metadata?.lastModifiedDateTime ?? latest.cloudLastModified ?? null,
+          cloudLastModified: resolvedCloudModified,
           cloudETag: metadata?.eTag ?? latest.cloudETag ?? null,
+          lastModifiedAt: Number.isFinite(parsedCloudMs) ? parsedCloudMs : Date.now(),
         });
         useAppStore.getState().setSyncStatus('saved');
 
@@ -446,6 +452,10 @@ class SaveCoordinator {
         const resolvedTitle =
           updatedItem.name && latest.title === titleToSave ? updatedItem.name : latest.title;
 
+        const parsedCloudMs = updatedItem.lastModifiedDateTime
+          ? Date.parse(updatedItem.lastModifiedDateTime)
+          : NaN;
+
         useAppStore.getState().setDocument({
           title: resolvedTitle,
           sourceRevision: revisionAtStart,
@@ -454,6 +464,7 @@ class SaveCoordinator {
           lastSavedAt: nowFormatted,
           cloudLastModified: updatedItem.lastModifiedDateTime,
           cloudETag: updatedItem.eTag || null,
+          lastModifiedAt: Number.isFinite(parsedCloudMs) ? parsedCloudMs : Date.now(),
         });
         useAppStore.getState().setSyncStatus('saved');
 
@@ -548,6 +559,7 @@ class SaveCoordinator {
           isDirty: false,
           lastSavedAt: nowFormatted,
           localLastModified: diskFile.lastModified,
+          lastModifiedAt: diskFile.lastModified,
           fileHandle: handle,
         });
         useAppStore.getState().setSyncStatus('saved');
@@ -643,6 +655,7 @@ class SaveCoordinator {
           isDirty: isStillDirty,
           lastSavedAt: nowFormatted,
           localLastModified: newLocalModified,
+          lastModifiedAt: newLocalModified,
           fileHandle: handle,
         });
         useAppStore.getState().setSyncStatus('saved');
