@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -19,21 +19,23 @@ export interface HomeScreenProps {
 export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onCloseOverlay }) => {
   const {
     openTab,
-    setIsOneDriveModalOpen,
     createNewDocument,
     setIsInstallModalOpen,
+    isOpenSourceModalOpen,
+    setIsOpenSourceModalOpen,
+    navigateToModal,
   } = useAppStore(
     useShallow((state) => ({
       openTab: state.openTab,
-      setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
       createNewDocument: state.createNewDocument,
       setIsInstallModalOpen: state.setIsInstallModalOpen,
+      isOpenSourceModalOpen: state.isOpenSourceModalOpen,
+      setIsOpenSourceModalOpen: state.setIsOpenSourceModalOpen,
+      navigateToModal: state.navigateToModal,
     }))
   );
 
   const { isStandalone } = usePwaInstall();
-
-  const [isOpenSourceModalOpen, setIsOpenSourceModalOpen] = useState(false);
 
   const handleFinishAction = () => {
     try {
@@ -136,7 +138,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ isOverlay = false, onClo
   };
 
   const handleOpenOneDrive = () => {
-    setIsOneDriveModalOpen(true);
+    navigateToModal({ modal: 'onedrive', mode: 'open' });
     handleFinishAction();
   };
 

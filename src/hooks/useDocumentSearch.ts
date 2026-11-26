@@ -54,7 +54,8 @@ function getSafeStickyTopWithSearchBar(): number {
 function isBlockingModalOpen(): boolean {
   const s = useAppStore.getState();
   return Boolean(
-    s.isOneDriveModalOpen ||
+    s.isOpenSourceModalOpen ||
+      s.isOneDriveModalOpen ||
       s.isSettingsModalOpen ||
       s.isRecentModalOpen ||
       s.isInstallModalOpen ||

@@ -1,24 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
+import { ModalCloseButton } from '../ui/ModalNavButtons';
 import {
-  X,
   Monitor,
   Tablet,
   Download,
   Share2,
   PlusSquare,
   CheckCircle2,
-  ExternalLink,
   Laptop,
 } from 'lucide-react';
 
 export const InstallAppModal: React.FC = () => {
-  const { isInstallModalOpen, setIsInstallModalOpen } = useAppStore(
+  const { isInstallModalOpen, closeAllModals } = useAppStore(
     useShallow((state) => ({
       isInstallModalOpen: state.isInstallModalOpen,
-      setIsInstallModalOpen: state.setIsInstallModalOpen,
+      closeAllModals: state.closeAllModals,
     }))
   );
 
@@ -28,6 +27,18 @@ export const InstallAppModal: React.FC = () => {
   );
   const [installSuccess, setInstallSuccess] = useState(false);
 
+  useEffect(() => {
+    if (!isInstallModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeAllModals();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isInstallModalOpen, closeAllModals]);
+
   if (!isInstallModalOpen) return null;
 
   const handleInstallClick = async () => {
@@ -36,7 +47,7 @@ export const InstallAppModal: React.FC = () => {
       setInstallSuccess(true);
       setTimeout(() => {
         setInstallSuccess(false);
-        setIsInstallModalOpen(false);
+        closeAllModals();
       }, 1500);
     }
   };
@@ -47,7 +58,7 @@ export const InstallAppModal: React.FC = () => {
       aria-modal="true"
       aria-labelledby="install-modal-title"
       className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
-      onClick={() => setIsInstallModalOpen(false)}
+      onClick={() => closeAllModals()}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -73,14 +84,7 @@ export const InstallAppModal: React.FC = () => {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setIsInstallModalOpen(false)}
-            aria-label="Fechar"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClick={() => closeAllModals()} />
         </div>
 
         {/* Abas Windows / iPad */}
@@ -210,17 +214,6 @@ export const InstallAppModal: React.FC = () => {
             </div>
           </div>
         )}
-
-        {/* Rodapé */}
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-700 flex justify-end">
-          <button
-            type="button"
-            onClick={() => setIsInstallModalOpen(false)}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-          >
-            Fechar
-          </button>
-        </div>
       </div>
     </div>
   );

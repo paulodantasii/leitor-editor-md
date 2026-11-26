@@ -1,6 +1,7 @@
-import React from 'react';
-import { AlertTriangle, Save, X, Trash2 } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { AlertTriangle, Save, Trash2 } from 'lucide-react';
 import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
+import { ModalCloseButton } from '../ui/ModalNavButtons';
 
 export type GuardActionType = 'new' | 'open_local' | 'open_onedrive' | 'open_recent' | 'close';
 
@@ -25,6 +26,18 @@ export const UnsavedChangesModal: React.FC<UnsavedChangesModalProps> = ({
   customActionTitle,
   customDescription,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const getActionLabels = () => {
@@ -101,13 +114,7 @@ export const UnsavedChangesModal: React.FC<UnsavedChangesModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title="Cancelar"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClick={onClose} title="Cancelar" />
         </div>
 
         {/* Message */}

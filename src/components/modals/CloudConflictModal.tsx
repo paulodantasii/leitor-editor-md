@@ -4,8 +4,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { downloadMarkdownFile } from '../../services/exportService';
 import { flushPendingEditorContent } from '../../services/editorContentBridge';
 import { saveRecentDocument } from '../../services/recentDocumentsService';
-import { AlertTriangle, Cloud, HardDrive, Download, X } from 'lucide-react';
+import { AlertTriangle, Cloud, HardDrive, Download } from 'lucide-react';
 import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
+import { ModalCloseButton } from '../ui/ModalNavButtons';
 
 export const CloudConflictModal: React.FC = () => {
   const {
@@ -114,13 +115,7 @@ export const CloudConflictModal: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={handleKeepLocal}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-            title="Fechar"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClick={handleKeepLocal} />
         </div>
 
         {/* Message */}

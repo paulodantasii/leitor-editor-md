@@ -34,6 +34,14 @@ import { flushPendingEditorContent, markBridgeClean } from '../services/editorCo
 import { renameOneDriveFile } from '../services/oneDriveService';
 import { hasValidThemeReloadSnapshot } from '../services/themeReloadSnapshot';
 
+export type ModalHistoryEntry =
+  | { modal: 'open_source' }
+  | { modal: 'save_destination' }
+  | { modal: 'onedrive'; mode: 'open' | 'save_as'; successAction?: 'close' | null }
+  | { modal: 'settings' }
+  | { modal: 'recent' }
+  | { modal: 'install' };
+
 interface AppState {
   // Preferences
   preferences: UserPreferences;
@@ -112,6 +120,8 @@ interface AppState {
   setFileHandle: (handle: any | null) => void;
 
   // Modals
+  isOpenSourceModalOpen: boolean;
+  setIsOpenSourceModalOpen: (open: boolean) => void;
   isOneDriveModalOpen: boolean;
   oneDriveModalMode: 'open' | 'save_as';
   oneDriveSuccessAction: 'close' | null;
@@ -125,6 +135,10 @@ interface AppState {
   setIsRecentModalOpen: (open: boolean) => void;
   isInstallModalOpen: boolean;
   setIsInstallModalOpen: (open: boolean) => void;
+  modalHistory: ModalHistoryEntry[];
+  navigateToModal: (target: ModalHistoryEntry) => void;
+  goBackModal: () => boolean;
+  closeAllModals: () => void;
 }
 
 const initialPreferences = loadUserPreferences();
@@ -1547,6 +1561,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setFileHandle: (handle) => set({ fileHandle: handle }),
 
   // Modals
+  isOpenSourceModalOpen: false,
+  setIsOpenSourceModalOpen: (open) =>
+    set({
+      isOpenSourceModalOpen: open,
+      modalHistory: [],
+    }),
   isOneDriveModalOpen: false,
   oneDriveModalMode: 'open',
   oneDriveSuccessAction: null,
@@ -1555,14 +1575,95 @@ export const useAppStore = create<AppState>((set, get) => ({
       isOneDriveModalOpen: open,
       oneDriveModalMode: open ? mode : state.oneDriveModalMode,
       oneDriveSuccessAction: open ? successAction : null,
+      modalHistory: [],
     })),
   setOneDriveSuccessAction: (action) => set({ oneDriveSuccessAction: action }),
   isSaveDestinationModalOpen: false,
-  setIsSaveDestinationModalOpen: (open) => set({ isSaveDestinationModalOpen: open }),
+  setIsSaveDestinationModalOpen: (open) =>
+    set({
+      isSaveDestinationModalOpen: open,
+      modalHistory: [],
+    }),
   isSettingsModalOpen: false,
-  setIsSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
+  setIsSettingsModalOpen: (open) =>
+    set({
+      isSettingsModalOpen: open,
+      modalHistory: [],
+    }),
   isRecentModalOpen: false,
-  setIsRecentModalOpen: (open) => set({ isRecentModalOpen: open }),
+  setIsRecentModalOpen: (open) =>
+    set({
+      isRecentModalOpen: open,
+      modalHistory: [],
+    }),
   isInstallModalOpen: false,
-  setIsInstallModalOpen: (open) => set({ isInstallModalOpen: open }),
+  setIsInstallModalOpen: (open) =>
+    set({
+      isInstallModalOpen: open,
+      modalHistory: [],
+    }),
+  modalHistory: [],
+  navigateToModal: (target) =>
+    set((state) => {
+      const current = getActiveModalEntry(state);
+      const nextHistory =
+        current && current.modal !== target.modal
+          ? [...state.modalHistory, current]
+          : state.modalHistory;
+      return {
+        ...buildModalStateForEntry(target, state.oneDriveModalMode),
+        modalHistory: nextHistory,
+      };
+    }),
+  goBackModal: () => {
+    const state = get();
+    if (state.modalHistory.length === 0) {
+      get().closeAllModals();
+      return false;
+    }
+    const previous = state.modalHistory[state.modalHistory.length - 1];
+    const nextHistory = state.modalHistory.slice(0, -1);
+    set({
+      ...buildModalStateForEntry(previous, state.oneDriveModalMode),
+      modalHistory: nextHistory,
+    });
+    return true;
+  },
+  closeAllModals: () =>
+    set((state) => ({
+      ...buildModalStateForEntry(null, state.oneDriveModalMode),
+      modalHistory: [],
+    })),
 }));
+
+function getActiveModalEntry(state: AppState): ModalHistoryEntry | null {
+  if (state.isRecentModalOpen) return { modal: 'recent' };
+  if (state.isSettingsModalOpen) return { modal: 'settings' };
+  if (state.isOneDriveModalOpen) {
+    return {
+      modal: 'onedrive',
+      mode: state.oneDriveModalMode,
+      successAction: state.oneDriveSuccessAction,
+    };
+  }
+  if (state.isSaveDestinationModalOpen) return { modal: 'save_destination' };
+  if (state.isOpenSourceModalOpen) return { modal: 'open_source' };
+  if (state.isInstallModalOpen) return { modal: 'install' };
+  return null;
+}
+
+function buildModalStateForEntry(
+  entry: ModalHistoryEntry | null,
+  prevOneDriveMode: 'open' | 'save_as'
+) {
+  return {
+    isOpenSourceModalOpen: entry?.modal === 'open_source',
+    isSaveDestinationModalOpen: entry?.modal === 'save_destination',
+    isOneDriveModalOpen: entry?.modal === 'onedrive',
+    isSettingsModalOpen: entry?.modal === 'settings',
+    isRecentModalOpen: entry?.modal === 'recent',
+    isInstallModalOpen: entry?.modal === 'install',
+    oneDriveModalMode: entry?.modal === 'onedrive' ? entry.mode : prevOneDriveMode,
+    oneDriveSuccessAction: entry?.modal === 'onedrive' ? entry.successAction ?? null : null,
+  };
+}

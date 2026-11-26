@@ -903,3 +903,92 @@ describe('Inicialização Limpa vs Recarga de Tema (Boot Lifecycle)', () => {
     expect(localBacking['leitor_md_open_tabs_v1']).toBeUndefined();
   });
 });
+
+describe('Pilha de Navegação de Modais', () => {
+  beforeEach(() => {
+    useAppStore.getState().closeAllModals();
+  });
+
+  it('navega em cadeia (open_source -> onedrive -> settings -> recent) e volta passo a passo com goBackModal', () => {
+    useAppStore.getState().setIsOpenSourceModalOpen(true);
+    expect(useAppStore.getState().isOpenSourceModalOpen).toBe(true);
+    expect(useAppStore.getState().modalHistory).toEqual([]);
+
+    useAppStore.getState().navigateToModal({ modal: 'onedrive', mode: 'open' });
+    expect(useAppStore.getState().isOpenSourceModalOpen).toBe(false);
+    expect(useAppStore.getState().isOneDriveModalOpen).toBe(true);
+    expect(useAppStore.getState().oneDriveModalMode).toBe('open');
+    expect(useAppStore.getState().modalHistory).toEqual([{ modal: 'open_source' }]);
+
+    useAppStore.getState().navigateToModal({ modal: 'settings' });
+    expect(useAppStore.getState().isOneDriveModalOpen).toBe(false);
+    expect(useAppStore.getState().isSettingsModalOpen).toBe(true);
+    expect(useAppStore.getState().modalHistory).toEqual([
+      { modal: 'open_source' },
+      { modal: 'onedrive', mode: 'open', successAction: null },
+    ]);
+
+    useAppStore.getState().navigateToModal({ modal: 'recent' });
+    expect(useAppStore.getState().isSettingsModalOpen).toBe(false);
+    expect(useAppStore.getState().isRecentModalOpen).toBe(true);
+    expect(useAppStore.getState().modalHistory).toHaveLength(3);
+
+    expect(useAppStore.getState().goBackModal()).toBe(true);
+    expect(useAppStore.getState().isRecentModalOpen).toBe(false);
+    expect(useAppStore.getState().isSettingsModalOpen).toBe(true);
+
+    expect(useAppStore.getState().goBackModal()).toBe(true);
+    expect(useAppStore.getState().isSettingsModalOpen).toBe(false);
+    expect(useAppStore.getState().isOneDriveModalOpen).toBe(true);
+    expect(useAppStore.getState().oneDriveModalMode).toBe('open');
+
+    expect(useAppStore.getState().goBackModal()).toBe(true);
+    expect(useAppStore.getState().isOneDriveModalOpen).toBe(false);
+    expect(useAppStore.getState().isOpenSourceModalOpen).toBe(true);
+    expect(useAppStore.getState().modalHistory).toEqual([]);
+
+    expect(useAppStore.getState().goBackModal()).toBe(false);
+    expect(useAppStore.getState().isOpenSourceModalOpen).toBe(false);
+  });
+
+  it('preserva o modo save_as do OneDrive ao voltar de SettingsModal', () => {
+    useAppStore.getState().setIsSaveDestinationModalOpen(true);
+    useAppStore.getState().navigateToModal({ modal: 'onedrive', mode: 'save_as', successAction: 'close' });
+    useAppStore.getState().navigateToModal({ modal: 'settings' });
+
+    expect(useAppStore.getState().isSettingsModalOpen).toBe(true);
+    expect(useAppStore.getState().goBackModal()).toBe(true);
+
+    const state = useAppStore.getState();
+    expect(state.isOneDriveModalOpen).toBe(true);
+    expect(state.oneDriveModalMode).toBe('save_as');
+    expect(state.oneDriveSuccessAction).toBe('close');
+  });
+
+  it('closeAllModals fecha todos os modais e limpa o histórico, e abertura direta limpa histórico residual', () => {
+    useAppStore.getState().setIsOpenSourceModalOpen(true);
+    useAppStore.getState().navigateToModal({ modal: 'onedrive', mode: 'open' });
+    useAppStore.getState().navigateToModal({ modal: 'settings' });
+    expect(useAppStore.getState().modalHistory).toHaveLength(2);
+
+    useAppStore.getState().closeAllModals();
+    let state = useAppStore.getState();
+    expect(state.isOpenSourceModalOpen).toBe(false);
+    expect(state.isOneDriveModalOpen).toBe(false);
+    expect(state.isSettingsModalOpen).toBe(false);
+    expect(state.isRecentModalOpen).toBe(false);
+    expect(state.isSaveDestinationModalOpen).toBe(false);
+    expect(state.isInstallModalOpen).toBe(false);
+    expect(state.modalHistory).toEqual([]);
+
+    useAppStore.getState().setIsOpenSourceModalOpen(true);
+    useAppStore.getState().navigateToModal({ modal: 'onedrive', mode: 'open' });
+    expect(useAppStore.getState().modalHistory).toHaveLength(1);
+
+    // Abertura direta pela raiz deve descartar histórico residual
+    useAppStore.getState().setIsSettingsModalOpen(true);
+    state = useAppStore.getState();
+    expect(state.isSettingsModalOpen).toBe(true);
+    expect(state.modalHistory).toEqual([]);
+  });
+});

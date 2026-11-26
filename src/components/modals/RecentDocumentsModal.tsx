@@ -14,16 +14,15 @@ import {
 } from '../../services/recentDocumentsService';
 import { downloadMarkdownFile } from '../../services/exportService';
 import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
+import { ModalBackButton, ModalCloseButton } from '../ui/ModalNavButtons';
 import {
   History,
-  X,
   Search,
   Cloud,
   FileText,
   Trash2,
   Clock,
   ArrowRight,
-  ArrowLeft,
   Folder,
   Download,
   CopyPlus,
@@ -54,23 +53,27 @@ const REASON_LABELS: Record<VersionSnapshotReason, { label: string; className: s
 export const RecentDocumentsModal: React.FC = () => {
   const {
     isRecentModalOpen,
-    setIsRecentModalOpen,
     recentDocuments,
     loadRecentDocuments,
     deleteRecentDocument,
     openTab,
     setSyncNotification,
     document: currentDoc,
+    modalHistory,
+    goBackModal,
+    closeAllModals,
   } = useAppStore(
     useShallow((state) => ({
       isRecentModalOpen: state.isRecentModalOpen,
-      setIsRecentModalOpen: state.setIsRecentModalOpen,
       recentDocuments: state.recentDocuments,
       loadRecentDocuments: state.loadRecentDocuments,
       deleteRecentDocument: state.deleteRecentDocument,
       openTab: state.openTab,
       setSyncNotification: state.setSyncNotification,
       document: state.document,
+      modalHistory: state.modalHistory,
+      goBackModal: state.goBackModal,
+      closeAllModals: state.closeAllModals,
     }))
   );
 
@@ -99,14 +102,16 @@ export const RecentDocumentsModal: React.FC = () => {
           setSelectedDoc(null);
           setVersions([]);
           setExpandedPreviewId(null);
+        } else if (modalHistory.length > 0) {
+          goBackModal();
         } else {
-          setIsRecentModalOpen(false);
+          closeAllModals();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRecentModalOpen, selectedDoc, setIsRecentModalOpen]);
+  }, [isRecentModalOpen, selectedDoc, modalHistory.length, goBackModal, closeAllModals]);
 
   const handleSelectDoc = useCallback(async (item: RecentDocumentItem) => {
     setSelectedDoc(item);
@@ -163,7 +168,7 @@ export const RecentDocumentsModal: React.FC = () => {
       },
       null
     );
-    setIsRecentModalOpen(false);
+    closeAllModals();
     setSyncNotification(`Versão de ${timeTag} aberta em nova aba como cópia segura.`);
   };
 
@@ -197,30 +202,46 @@ export const RecentDocumentsModal: React.FC = () => {
     return singleLine.length > 160 ? `${singleLine.slice(0, 160)}…` : singleLine;
   };
 
+  const canGoBack = Boolean(selectedDoc) || modalHistory.length > 0;
+
+  const handleBack = () => {
+    if (selectedDoc) {
+      setSelectedDoc(null);
+      setVersions([]);
+      setExpandedPreviewId(null);
+    } else {
+      goBackModal();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+      onClick={() => closeAllModals()}
+    >
+      <div
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="p-5 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            {selectedDoc ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedDoc(null);
-                  setVersions([]);
-                  setExpandedPreviewId(null);
-                }}
-                className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center shrink-0 transition-colors cursor-pointer"
-                title="Voltar para lista de arquivos"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            ) : (
-              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-                <History className="w-5 h-5" />
-              </div>
+            {canGoBack && (
+              <ModalBackButton
+                onClick={handleBack}
+                title={selectedDoc ? 'Voltar para lista de arquivos' : 'Voltar'}
+              />
             )}
+
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                selectedDoc
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
+              }`}
+            >
+              {selectedDoc ? <FileText className="w-5 h-5" /> : <History className="w-5 h-5" />}
+            </div>
 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -245,14 +266,7 @@ export const RecentDocumentsModal: React.FC = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsRecentModalOpen(false)}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
-            title="Fechar"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClick={() => closeAllModals()} />
         </div>
 
         {/* Search Bar (apenas na lista de arquivos) */}
@@ -494,35 +508,6 @@ export const RecentDocumentsModal: React.FC = () => {
               );
             })
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-3 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          {selectedDoc ? (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedDoc(null);
-                setVersions([]);
-                setExpandedPreviewId(null);
-              }}
-              className="px-3 py-1.5 rounded-xl hover:bg-slate-200/70 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Voltar aos arquivos</span>
-            </button>
-          ) : (
-            <span>
-              {filteredDocs.length} {filteredDocs.length === 1 ? 'arquivo no cofre' : 'arquivos no cofre'}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setIsRecentModalOpen(false)}
-            className="px-4 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium transition-colors cursor-pointer"
-          >
-            Fechar
-          </button>
         </div>
       </div>
     </div>

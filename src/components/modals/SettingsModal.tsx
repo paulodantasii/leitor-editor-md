@@ -9,8 +9,8 @@ import {
 } from '../../services/msalService';
 import { executeCleanAppReload } from '../../services/cleanReloadService';
 import { ReloadAppConfirmModal } from './ReloadAppConfirmModal';
+import { ModalBackButton, ModalCloseButton } from '../ui/ModalNavButtons';
 import {
-  X,
   Key,
   Info,
   Check,
@@ -28,25 +28,29 @@ import {
 export const SettingsModal: React.FC = () => {
   const {
     isSettingsModalOpen,
-    setIsSettingsModalOpen,
     userProfile,
     setUserProfile,
     preferences,
     setPreferences,
-    setIsRecentModalOpen,
     recentDocuments,
     loadRecentDocuments,
+    modalHistory,
+    navigateToModal,
+    goBackModal,
+    closeAllModals,
   } = useAppStore(
     useShallow((state) => ({
       isSettingsModalOpen: state.isSettingsModalOpen,
-      setIsSettingsModalOpen: state.setIsSettingsModalOpen,
       userProfile: state.userProfile,
       setUserProfile: state.setUserProfile,
       preferences: state.preferences,
       setPreferences: state.setPreferences,
-      setIsRecentModalOpen: state.setIsRecentModalOpen,
       recentDocuments: state.recentDocuments,
       loadRecentDocuments: state.loadRecentDocuments,
+      modalHistory: state.modalHistory,
+      navigateToModal: state.navigateToModal,
+      goBackModal: state.goBackModal,
+      closeAllModals: state.closeAllModals,
     }))
   );
 
@@ -69,6 +73,22 @@ export const SettingsModal: React.FC = () => {
       void loadRecentDocuments();
     }
   }, [isSettingsModalOpen, loadRecentDocuments]);
+
+  useEffect(() => {
+    if (!isSettingsModalOpen || isReloadConfirmOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (modalHistory.length > 0) {
+          goBackModal();
+        } else {
+          closeAllModals();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSettingsModalOpen, isReloadConfirmOpen, modalHistory.length, goBackModal, closeAllModals]);
 
   if (!isSettingsModalOpen) return null;
 
@@ -129,15 +149,26 @@ export const SettingsModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-lg p-6 space-y-5 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+      onClick={() => {
+        if (!isReloadConfirmOpen) closeAllModals();
+      }}
+    >
+      <div
+        className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-lg p-6 space-y-5 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Cabeçalho */}
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {modalHistory.length > 0 && (
+              <ModalBackButton onClick={() => goBackModal()} title="Voltar" />
+            )}
+            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
               <Settings className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-slate-100">
                 Configurações
               </h3>
@@ -146,13 +177,7 @@ export const SettingsModal: React.FC = () => {
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setIsSettingsModalOpen(false)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-            title="Fechar"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClick={() => closeAllModals()} />
         </div>
 
         {/* Seção 1: Conta OneDrive */}
@@ -311,10 +336,7 @@ export const SettingsModal: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => {
-                setIsSettingsModalOpen(false);
-                setIsRecentModalOpen(true);
-              }}
+              onClick={() => navigateToModal({ modal: 'recent' })}
               className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-xs flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer"
             >
               <span>Ver Backups</span>
@@ -341,17 +363,6 @@ export const SettingsModal: React.FC = () => {
               <span>Recarregar App</span>
             </button>
           </div>
-        </div>
-
-        {/* Rodapé */}
-        <div className="flex items-center justify-end pt-3 border-t border-slate-100 dark:border-slate-700">
-          <button
-            type="button"
-            onClick={() => setIsSettingsModalOpen(false)}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-          >
-            Fechar
-          </button>
         </div>
       </div>
       {isReloadConfirmOpen && (

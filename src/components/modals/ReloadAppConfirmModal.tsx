@@ -1,10 +1,11 @@
 import React, { useEffect } from 'react';
-import { AlertTriangle, RotateCw, X } from 'lucide-react';
+import { AlertTriangle, RotateCw } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../store/useAppStore';
 import { getReloadTabsWarningInfo } from '../../services/cleanReloadService';
 import { hasPendingBridgeChanges } from '../../services/editorContentBridge';
 import { MiddleEllipsisText } from '../ui/MiddleEllipsisText';
+import { ModalCloseButton } from '../ui/ModalNavButtons';
 
 interface ReloadAppConfirmModalProps {
   isOpen: boolean;
@@ -63,6 +64,7 @@ export const ReloadAppConfirmModal: React.FC<ReloadAppConfirmModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="reload-app-confirm-title"
+      onClick={(e) => e.stopPropagation()}
     >
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-md p-6 space-y-5 animate-in zoom-in-95 duration-200">
         {/* Cabeçalho */}
@@ -83,15 +85,7 @@ export const ReloadAppConfirmModal: React.FC<ReloadAppConfirmModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isReloading}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed"
-            title="Fechar"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClick={onClose} disabled={isReloading} />
         </div>
 
         {/* Corpo */}

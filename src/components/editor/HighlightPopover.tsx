@@ -14,13 +14,13 @@ import {
 } from '../../services/highlightCommentsService';
 
 export const HIGHLIGHT_COLORS: HighlightColorOption[] = [
-  { id: 'yellow', name: 'Amarelo', bgClass: 'bg-amber-200 hover:bg-amber-300 dark:bg-yellow-300', borderClass: 'border-amber-400', hex: '#fef08a' },
+  { id: 'yellow', name: 'Amarelo', bgClass: 'bg-[#fef5b8] hover:bg-[#fde68a] dark:bg-yellow-300', borderClass: 'border-amber-400', hex: '#fef5b8' },
   { id: 'blue', name: 'Azul', bgClass: 'bg-sky-200 hover:bg-sky-300 dark:bg-sky-300', borderClass: 'border-sky-400', hex: '#bae6fd' },
   { id: 'red', name: 'Vermelho', bgClass: 'bg-red-200 hover:bg-red-300 dark:bg-red-300', borderClass: 'border-red-400', hex: '#fecaca' },
-  { id: 'green', name: 'Verde', bgClass: 'bg-emerald-200 hover:bg-emerald-300 dark:bg-emerald-300', borderClass: 'border-emerald-400', hex: '#bbf7d0' },
+  { id: 'green', name: 'Verde', bgClass: 'bg-green-200 hover:bg-green-300 dark:bg-green-300', borderClass: 'border-green-400', hex: '#bbf7d0' },
   { id: 'purple', name: 'Roxo', bgClass: 'bg-purple-200 hover:bg-purple-300 dark:bg-purple-300', borderClass: 'border-purple-400', hex: '#e9d5ff' },
   { id: 'orange', name: 'Laranja', bgClass: 'bg-orange-200 hover:bg-orange-300 dark:bg-orange-300', borderClass: 'border-orange-400', hex: '#fed7aa' },
-  { id: 'gray', name: 'Cinza', bgClass: 'bg-slate-300 hover:bg-slate-400 dark:bg-slate-400', borderClass: 'border-slate-400', hex: '#cbd5e1' },
+  { id: 'gray', name: 'Cinza', bgClass: 'bg-[#b8c4d4] hover:bg-slate-400 dark:bg-slate-400', borderClass: 'border-slate-400', hex: '#b8c4d4' },
 ];
 
 export function getHighlightColorOption(color?: HighlightColor | null): HighlightColorOption {

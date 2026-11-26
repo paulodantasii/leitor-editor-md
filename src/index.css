@@ -51,7 +51,7 @@
 
 /* Custom Highlight Mark Styling (Pastel colors) */
 mark {
-  background-color: #fef08a;
+  background-color: #fef5b8;
   color: inherit;
   border-radius: 4px;
   padding: 0.12em 0;
@@ -116,7 +116,7 @@ mark.mark-latest-pulse {
 
 /* Highlight Color Variants */
 mark.yellow {
-  background-color: #fef08a;
+  background-color: #fef5b8;
 }
 
 mark.blue {
@@ -144,7 +144,7 @@ mark.orange {
 }
 
 mark.gray {
-  background-color: #cbd5e1;
+  background-color: #b8c4d4;
 }
 
 /* Dark mode adjustment for pastel highlights */
@@ -926,7 +926,7 @@ html.scroll-restoring body {
 
   mark.yellow,
   mark:not([class*=" "]) {
-    background-color: #fef08a !important;
+    background-color: #fef5b8 !important;
   }
 
   mark.blue {
@@ -954,7 +954,7 @@ html.scroll-restoring body {
   }
 
   mark.gray {
-    background-color: #cbd5e1 !important;
+    background-color: #b8c4d4 !important;
   }
 
   /* Hide search highlight overlays during PDF export / print */

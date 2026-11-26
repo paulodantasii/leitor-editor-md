@@ -70,6 +70,7 @@ export const Header: React.FC = () => {
     setSyncNotification,
     setIsInstallModalOpen,
     setIsSettingsModalOpen,
+    navigateToModal,
     autoSync,
     isSearchOpen,
     toggleSearch,
@@ -95,6 +96,7 @@ export const Header: React.FC = () => {
       setSyncNotification: state.setSyncNotification,
       setIsInstallModalOpen: state.setIsInstallModalOpen,
       setIsSettingsModalOpen: state.setIsSettingsModalOpen,
+      navigateToModal: state.navigateToModal,
       autoSync: state.preferences.autoSync !== false,
       isSearchOpen: state.isSearchOpen,
       toggleSearch: state.toggleSearch,
@@ -721,8 +723,7 @@ export const Header: React.FC = () => {
         onClose={() => setIsSaveDestinationModalOpen(false)}
         documentTitle={activeTab?.title || currentDoc.title}
         onSaveToOneDrive={() => {
-          setIsSaveDestinationModalOpen(false);
-          setIsOneDriveModalOpen(true, 'save_as');
+          navigateToModal({ modal: 'onedrive', mode: 'save_as' });
         }}
         onSaveToLocal={async () => {
           setIsSaveDestinationModalOpen(false);

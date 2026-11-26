@@ -23,6 +23,7 @@ import { OneDriveItem, DocumentState } from '../../types';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { OneDriveItemRow } from './OneDriveItemRow';
 import { MiddleEllipsisText } from '@/components/ui/MiddleEllipsisText';
+import { ModalBackButton, ModalCloseButton } from '../ui/ModalNavButtons';
 import {
   X,
   Cloud,
@@ -53,7 +54,6 @@ interface ClipboardState {
 export const OneDriveModal: React.FC = () => {
   const {
     isOneDriveModalOpen,
-    setIsOneDriveModalOpen,
     oneDriveModalMode,
     oneDriveSuccessAction,
     setOneDriveSuccessAction,
@@ -66,14 +66,16 @@ export const OneDriveModal: React.FC = () => {
     openTab,
     setSyncStatus,
     setSyncNotification,
-    setIsSettingsModalOpen,
     setFileHandle,
     syncOneDriveFileRenamed,
     detachDeletedOneDriveItems,
+    modalHistory,
+    navigateToModal,
+    goBackModal,
+    closeAllModals,
   } = useAppStore(
     useShallow((state) => ({
       isOneDriveModalOpen: state.isOneDriveModalOpen,
-      setIsOneDriveModalOpen: state.setIsOneDriveModalOpen,
       oneDriveModalMode: state.oneDriveModalMode,
       oneDriveSuccessAction: state.oneDriveSuccessAction,
       setOneDriveSuccessAction: state.setOneDriveSuccessAction,
@@ -86,10 +88,13 @@ export const OneDriveModal: React.FC = () => {
       openTab: state.openTab,
       setSyncStatus: state.setSyncStatus,
       setSyncNotification: state.setSyncNotification,
-      setIsSettingsModalOpen: state.setIsSettingsModalOpen,
       setFileHandle: state.setFileHandle,
       syncOneDriveFileRenamed: state.syncOneDriveFileRenamed,
       detachDeletedOneDriveItems: state.detachDeletedOneDriveItems,
+      modalHistory: state.modalHistory,
+      navigateToModal: state.navigateToModal,
+      goBackModal: state.goBackModal,
+      closeAllModals: state.closeAllModals,
     }))
   );
 
@@ -186,8 +191,10 @@ export const OneDriveModal: React.FC = () => {
         } else if (globalSearchResults !== null) {
           setGlobalSearchResults(null);
           setSearchQuery('');
+        } else if (modalHistory.length > 0) {
+          goBackModal();
         } else {
-          setIsOneDriveModalOpen(false);
+          closeAllModals();
         }
       }
     };
@@ -201,7 +208,9 @@ export const OneDriveModal: React.FC = () => {
     isBatchDeletingConfirm,
     clipboardState,
     globalSearchResults,
-    setIsOneDriveModalOpen,
+    modalHistory.length,
+    goBackModal,
+    closeAllModals,
   ]);
 
   // Carrega itens da pasta
@@ -346,7 +355,7 @@ export const OneDriveModal: React.FC = () => {
       }
 
       setSyncStatus('saved');
-      setIsOneDriveModalOpen(false);
+      closeAllModals();
     } catch (err: any) {
       setErrorMsg(err.message || 'Erro ao abrir arquivo do OneDrive.');
     } finally {
@@ -405,7 +414,7 @@ export const OneDriveModal: React.FC = () => {
     setIsLoading(false);
 
     if (result.status === 'saved') {
-      setIsOneDriveModalOpen(false);
+      closeAllModals();
     } else if (result.status === 'error') {
       setErrorMsg(result.message || 'Erro ao salvar documento no OneDrive.');
     }
@@ -458,7 +467,7 @@ export const OneDriveModal: React.FC = () => {
       setSyncStatus('saved');
 
       await saveRecentDocument({ ...updatedDoc }, 'sync');
-      setIsOneDriveModalOpen(false);
+      closeAllModals();
 
       if (oneDriveSuccessAction === 'close') {
         setOneDriveSuccessAction(null);
@@ -656,7 +665,7 @@ export const OneDriveModal: React.FC = () => {
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4"
-      onClick={() => setIsOneDriveModalOpen(false)}
+      onClick={() => closeAllModals()}
     >
       <div
         className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-2xl p-4 sm:p-5 space-y-3 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col"
@@ -664,29 +673,24 @@ export const OneDriveModal: React.FC = () => {
       >
         {/* Cabeçalho Enxuto */}
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2.5">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {modalHistory.length > 0 && (
+              <ModalBackButton onClick={() => goBackModal()} title="Voltar" />
+            )}
             <Cloud className="w-5 h-5 text-sky-500 shrink-0" />
-            <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-slate-100">
+            <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-slate-100 truncate">
               {isSaveAs ? 'Salvar no OneDrive' : 'OneDrive'}
             </h3>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => {
-                setIsOneDriveModalOpen(false);
-                setIsSettingsModalOpen(true);
-              }}
+              onClick={() => navigateToModal({ modal: 'settings' })}
               title="Configurar Client ID Azure"
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
             >
               <Settings className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => setIsOneDriveModalOpen(false)}
-              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <ModalCloseButton onClick={() => closeAllModals()} />
           </div>
         </div>
 
@@ -1111,28 +1115,19 @@ export const OneDriveModal: React.FC = () => {
 
         {/* Rodapé Condicional (Apenas quando estritamente necessário) */}
         {showFooter && (
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center justify-end pt-1">
             {isSaveAs ? (
-              <>
+              userProfile && (
                 <button
                   type="button"
-                  onClick={() => setIsOneDriveModalOpen(false)}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                  onClick={handleSaveAsConfirm}
+                  disabled={isLoading || !saveFileName.trim()}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white shadow-sm flex items-center gap-1.5 transition-all cursor-pointer ml-auto"
                 >
-                  Cancelar
+                  <Save className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                  {isLoading ? 'Salvando...' : 'Salvar Aqui'}
                 </button>
-                {userProfile && (
-                  <button
-                    type="button"
-                    onClick={handleSaveAsConfirm}
-                    disabled={isLoading || !saveFileName.trim()}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
-                  >
-                    <Save className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                    {isLoading ? 'Salvando...' : 'Salvar Aqui'}
-                  </button>
-                )}
-              </>
+              )
             ) : (
               currentDoc?.oneDriveItemId && userProfile && (
                 <button
